@@ -56,15 +56,19 @@ reads the palm position from the player's grip space; if catches feel off on a r
 With `npm run dev:runtime` running:
 
 ```bash
-node tests/headless-game.cjs               # quick: 8-ball rounds
-BALLS=50 node tests/headless-game.cjs      # full-length rounds (several minutes in a software-rendered browser)
+node tests/headless-game.cjs               # 8-ball rounds, about 10 seconds
+BALLS=50 node tests/headless-game.cjs      # full 50-ball rounds, about 10 seconds
 # if Playwright's own Chromium is not installed:
 CHROME_PATH=/path/to/chrome node tests/headless-game.cjs
 ```
 
-It plays one round with a hand always meeting the ball (expects every ball caught), restarts by touching
-the green ball, then plays a round with hands out of the way (expects every ball missed), and checks that
-speed ramps up and stays under the cap, the ball swings, the swing grows, and the page logs no errors.
+It starts an emulated XR session, then plays one round with every ball caught, restarts by touching the
+green ball, and plays a round with every ball missed. It checks that speed ramps up and stays under the cap,
+that the ball swings, that the swing grows, and that the page logs no errors.
+
+The rounds are stepped at a fixed 60 Hz inside the page, and the palm is placed on the ball's grip space
+directly. The software renderer in a container runs at a few frames per second, so real-time play would take
+many minutes. The emulator's hand-tracking path was checked separately with a single 8-ball run.
 
 ## Not yet verified
 
