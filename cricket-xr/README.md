@@ -1,45 +1,69 @@
-# IWSDK App
+# Cricket Catch (Meta Immersive Web SDK, WebXR, hand tracking)
 
-This project uses `iwsdk.config.json` for declarative scene, asset, component,
-XR, and emulator configuration. Application systems remain explicit in
-`src/index.ts`.
+A coach swings a bat, the ball flies at you (it swings in the air and gets faster every ball) and you
+catch it with your bare hands. 6 balls per round, score and misses, then touch the green ball to
+play again. Built on the Meta Immersive Web SDK (IWSDK, Three.js based). No models, textures or audio
+files: the stadium, coach, sounds and effects are all generated in code.
 
-```sh
+## Run it
+
+```bash
 npm install
-npm run dev
+npm run dev:runtime      # Vite dev server on https://localhost:8081 (accept the local certificate warning)
 ```
 
-Use the Runtime and Editor controls in the managed browser to switch between
-the running experience and its authored scene.
+Open `https://localhost:8081` in Chrome or Edge. In dev mode the IWSDK emulator (IWER) is injected, so
+no headset is needed: the emulator panel lets you move the head and both hands and pick poses.
+Press **Enter XR** if the page offers it, switch the emulator input to **hands**, then put a hand on the
+green ball (or press Space) to start.
 
-## Starter content
+`npm run dev` is IWSDK's managed variant (it also opens its own browser); it needs a browser download.
 
-The robot and welcome panel are small examples of authored scene content plus
-runtime systems. The robot turns toward the player's head and plays a sound
-when pressed. To remove the robot, delete its scene node, its `RobotSystem`
-registration from `src/index.ts` or `src/index.js`, and its `Robot` registration
-from `src/components.ts` or `src/components.js`; you can then delete the unused
-robot component and system files. To remove the welcome panel, delete its scene
-node and its `PanelSystem` registration from the application entry point.
+On a Quest: open the same URL from the headset's browser (same Wi-Fi, accept the certificate warning)
+or deploy `npm run build` output (`dist/`) to any HTTPS host.
 
-The robot stands on the second of three numbered stations. The first holds dark
-pieces you can grab and move, and the third holds a ring you can spin in place.
-The studio props (the plinths and the dark pieces, plus the floor and stage in VR
-and Desktop 3D) are built in code in `src/scene-assets/studio.scene-asset.ts` or
-`.js`. The VR and Desktop 3D background furniture is built the same way in
-`src/scene-assets/decor.scene-asset.ts` or `.js`, so the starter downloads no
-extra models. To remove any of them, delete their scene nodes and their entries
-in `src/assets.ts` or `src/assets.js`, then delete the files you no longer use.
-The station labels are `public/ui/label-*.uikitml`.
+## How it plays
 
-The rest of the look is built-in components in the scene, which you can edit in
-the editor without code. The soft light on every object is the scene root's
-`IBLGradient` (select the Level Root to edit it), and the soft shadows under
-each object are `ContactShadow` nodes. In VR and Desktop 3D, the sky is the
-scene root's `DomeGradient` (its colors, tilt and dither are also on the Level
-Root), and the floor fades into it through the `DomeFade` on the floor node. AR
-projects have no sky or floor, so passthrough stays visible, and a
-`ShadowCatcher` node grounds the stations.
+- The ball leaves the bat at the moment of contact and is aimed at chest height wherever your head is.
+- **Speed** rises every ball (43 km/h up to 70 km/h by ball 6). **Swing** rises too: a sideways force
+  curves the ball in the air. The path is solved so it bends INTO the catching area.
+- A catch is a palm within `catchRadius` of the ball's path. The test is swept between frames so a
+  fast ball cannot skip past a hand.
 
-- Minimal scene walkthrough: https://iwsdk.dev/guides/01b-minimal-scene.html
-- XR-enabled projects — IWER emulator controls: https://iwsdk.dev/guides/02-testing-experience.html#iwer-controls
+## Files
+
+| File | Job |
+|---|---|
+| `src/config.js` | All tuning: balls per round, speeds, swing, catch radius, delays |
+| `src/game.js` | `GameSystem`: round state machine, ball flight, catch detection, scoring, restart |
+| `src/stadium.js` | Pitch, stands, crowd, floodlights, coach and bat |
+| `src/hud.js` | World-space scoreboard and title / round-over card (canvas textures) |
+| `src/fx.js` | Generated sounds, catch particles, ball trail |
+| `iwsdk.config.json`, `public/scenes/` | IWSDK project config (hand tracking on) and the sky |
+| `tests/headless-game.cjs` | End-to-end test with emulated hands |
+
+## Tuning
+
+`src/config.js`: `startSpeed`, `speedStep`, `swingBase`, `swingStep`, `catchRadius`. `src/game.js`
+reads the palm position from the player's grip space; if catches feel off on a real headset, adjust
+`catchRadius` first.
+
+## Test
+
+With `npm run dev:runtime` running:
+
+```bash
+node tests/headless-game.cjs
+# if Playwright's own Chromium is not installed:
+CHROME_PATH=/path/to/chrome node tests/headless-game.cjs
+```
+
+It plays one round with a hand always meeting the ball (expects 6 of 6), restarts by touching the green
+ball, then plays a round with hands out of the way (expects 0 of 6), and checks that speed rises, the ball
+swings, the swing grows, and the page logs no errors.
+
+## Not yet verified
+
+Only tested in the IWER emulator with emulated hands. Not tested on a real Quest: real hand-tracking
+feel, comfort, audio start on device, and frame rate. The hand model files the SDK loads from a CDN
+need internet access.
