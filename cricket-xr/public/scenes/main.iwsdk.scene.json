@@ -1,0 +1,75 @@
+{
+  "version": "iwsdk.scene.v1",
+  "units": "meters",
+  "components": {
+    "com.iwsdk.components.DomeGradient": {
+      "sky": [
+        0.843,
+        0.796,
+        0.882,
+        1
+      ],
+      "equator": [
+        0.808,
+        0.855,
+        0.91,
+        1
+      ],
+      "ground": [
+        0.902,
+        0.855,
+        0.82,
+        1
+      ],
+      "elevationDeg": 24,
+      "azimuthDeg": -31,
+      "dither": true
+    },
+    "com.iwsdk.components.IBLGradient": {
+      "sky": [
+        0.72,
+        0.7,
+        0.8,
+        1
+      ],
+      "equator": [
+        0.78,
+        0.78,
+        0.84,
+        1
+      ],
+      "ground": [
+        0.5,
+        0.52,
+        0.58,
+        1
+      ],
+      "intensity": 0.2025
+    }
+  },
+  "environment": {
+    "toneMapping": "aces",
+    "exposure": 1.2,
+    "shadows": true,
+    "shadowMapType": "pcf"
+  },
+  "resources": {},
+  "nodes": [
+    {
+      "id": "studio-floor",
+      "name": "Studio Floor",
+      "framingRole": "support",
+      "content": {
+        "type": "asset",
+        "asset": "studio-floor",
+        "receiveShadow": true
+      },
+      "components": {
+        "DomeFade": {
+          "start": 4,
+          "end": 10
+        }
+      }
+    }
+  ]
+}
