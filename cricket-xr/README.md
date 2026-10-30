@@ -1,7 +1,7 @@
 # Cricket Catch (Meta Immersive Web SDK, WebXR, hand tracking)
 
 A coach swings a bat, the ball flies at you (it swings in the air and gets faster every ball) and you
-catch it with your bare hands. 6 balls per round, score and misses, then touch the green ball to
+catch it with your bare hands. 50 balls per round, score and misses, then touch the green ball to
 play again. Built on the Meta Immersive Web SDK (IWSDK, Three.js based). No models, textures or audio
 files: the stadium, coach, sounds and effects are all generated in code.
 
@@ -25,8 +25,11 @@ or deploy `npm run build` output (`dist/`) to any HTTPS host.
 ## How it plays
 
 - The ball leaves the bat at the moment of contact and is aimed at chest height wherever your head is.
-- **Speed** rises every ball (43 km/h up to 70 km/h by ball 6). **Swing** rises too: a sideways force
-  curves the ball in the air. The path is solved so it bends INTO the catching area.
+- **Speed** and **swing** both climb over the first 25 balls (43 km/h up to 79 km/h; a sideways force
+  curves the ball in the air, solved so it bends INTO the catching area). After that they hold at the
+  maximum, with a little speed variety so later balls are not identical.
+- A round is 50 balls (about 3 minutes). Change `balls` in `src/config.js` for 100, or add `?balls=N` to
+  the URL for a one-off length.
 - A catch is a palm within `catchRadius` of the ball's path. The test is swept between frames so a
   fast ball cannot skip past a hand.
 
@@ -34,7 +37,7 @@ or deploy `npm run build` output (`dist/`) to any HTTPS host.
 
 | File | Job |
 |---|---|
-| `src/config.js` | All tuning: balls per round, speeds, swing, catch radius, delays |
+| `src/config.js` | All tuning: balls per round, difficulty ramp, speeds, swing, catch radius, delays |
 | `src/game.js` | `GameSystem`: round state machine, ball flight, catch detection, scoring, restart |
 | `src/stadium.js` | Pitch, stands, crowd, floodlights, coach and bat |
 | `src/hud.js` | World-space scoreboard and title / round-over card (canvas textures) |
@@ -44,7 +47,7 @@ or deploy `npm run build` output (`dist/`) to any HTTPS host.
 
 ## Tuning
 
-`src/config.js`: `startSpeed`, `speedStep`, `swingBase`, `swingStep`, `catchRadius`. `src/game.js`
+`src/config.js`: `balls`, `rampBalls`, `startSpeed`, `maxSpeed`, `swingBase`, `swingMax`, `catchRadius`. `src/game.js`
 reads the palm position from the player's grip space; if catches feel off on a real headset, adjust
 `catchRadius` first.
 
@@ -53,14 +56,15 @@ reads the palm position from the player's grip space; if catches feel off on a r
 With `npm run dev:runtime` running:
 
 ```bash
-node tests/headless-game.cjs
+node tests/headless-game.cjs               # quick: 8-ball rounds
+BALLS=50 node tests/headless-game.cjs      # full-length rounds (several minutes in a software-rendered browser)
 # if Playwright's own Chromium is not installed:
 CHROME_PATH=/path/to/chrome node tests/headless-game.cjs
 ```
 
-It plays one round with a hand always meeting the ball (expects 6 of 6), restarts by touching the green
-ball, then plays a round with hands out of the way (expects 0 of 6), and checks that speed rises, the ball
-swings, the swing grows, and the page logs no errors.
+It plays one round with a hand always meeting the ball (expects every ball caught), restarts by touching
+the green ball, then plays a round with hands out of the way (expects every ball missed), and checks that
+speed ramps up and stays under the cap, the ball swings, the swing grows, and the page logs no errors.
 
 ## Not yet verified
 

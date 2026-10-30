@@ -123,12 +123,13 @@ export class GameSystem extends createSystem({}) {
 
   beginThrow() {
     this.ballNo++;
-    const n = this.ballNo - 1;
-    const speed = Math.min(CFG.startSpeed + CFG.speedStep * n, CFG.maxSpeed);
+    const ramp = Math.min(1, (this.ballNo - 1) / CFG.rampBalls);
+    let speed = lerp(CFG.startSpeed, CFG.maxSpeed, ramp);
+    if (ramp >= 1) speed += (Math.random() * 2 - 1) * CFG.speedJitter;
     this.throwSpeed = speed;
     this.kmh = Math.round(speed * 3.6);
     this.side = Math.random() < 0.5 ? -1 : 1;
-    this.swingA = CFG.swingBase + CFG.swingStep * n;
+    this.swingA = lerp(CFG.swingBase, CFG.swingMax, ramp);
 
     // Arrival point: around chest height, wherever the headset currently is.
     this.player.head.getWorldPosition(this.head);
@@ -201,7 +202,8 @@ export class GameSystem extends createSystem({}) {
     this.lockout = CFG.restartLockout;
     this.marker.visible = true;
     const ratio = this.score / CFG.balls;
-    const rating = ratio >= 0.8 ? 'Safe hands!' : ratio >= 0.5 ? 'Good catching' : 'Keep practising';
+    const rating =
+      ratio >= 0.95 ? 'Legendary hands!' : ratio >= 0.8 ? 'Safe hands!' : ratio >= 0.5 ? 'Good catching' : 'Keep practising';
     this.hud.set({ message: '' });
     this.hud.showCard(
       'Round over',
