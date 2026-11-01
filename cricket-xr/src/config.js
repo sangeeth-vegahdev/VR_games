@@ -18,6 +18,8 @@ export const CFG = {
   readyDelay: 0.9,
   feedbackDelay: 1.0,
   restartLockout: 1.0,
+  aimHint: true, // show a ring where the ball will arrive, over the last part of its flight
+  aimHintFromZ: -9, // ...once the ball is closer than this
   maxLife: 5, // safety net for a ball that never resolves
   missZ: 0.2, // a ball past this z (behind the hands) is missed
 };

@@ -60,7 +60,7 @@ export class Hud {
     // Scoreboard above the ball's flight path, in front of the player.
     this.board = new Panel(world, 2.4, 1.0, 400, [0, 2.45, -3.4]);
     // Round-over / title card, closer and lower.
-    this.card = new Panel(world, 2.0, 1.0, 400, [0, 1.8, -1.6]);
+    this.card = new Panel(world, 2.0, 1.2, 400, [0, 1.8, -1.6]);
     this.card.mesh.visible = false;
     this.model = { score: 0, misses: 0, ballNo: 0, kmh: 0, message: '', color: '#fff' };
     this.drawBoard();
@@ -95,8 +95,8 @@ export class Hud {
     p.card();
     const w = p.canvas.width;
     p.text(title, w / 2, 100, 84, '#ffffff');
-    lines.forEach((line, i) => p.text(line.text, w / 2, 205 + i * 78, 50, line.color || DIM, 600));
-    p.text(hint, w / 2, p.canvas.height - 55, 38, DIM, 600);
+    lines.forEach((line, i) => p.text(line.text, w / 2, 190 + i * 72, 48, line.color || DIM, 600));
+    p.text(hint, w / 2, p.canvas.height - 50, 38, DIM, 600);
     p.commit();
     p.mesh.visible = true;
     this.board.mesh.visible = false; // the card already shows the result

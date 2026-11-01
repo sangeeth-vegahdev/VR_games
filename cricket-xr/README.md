@@ -23,6 +23,11 @@ green ball (or press Space) to start.
 On a Quest: open the same URL from the headset's browser (same Wi-Fi, accept the certificate warning)
 or deploy `npm run build` output (`dist/`) to any HTTPS host.
 
+## Play without a headset
+
+Open the page in a desktop browser: no headset is needed. Move the mouse to move your hand (the cyan ring)
+and touch the green ball to start. With a headset, press **Enter XR** and use your real hands.
+
 ## How it plays
 
 - The ball leaves the bat at the moment of contact and is aimed at chest height wherever your head is.
@@ -33,6 +38,9 @@ or deploy `npm run build` output (`dist/`) to any HTTPS host.
   the URL for a one-off length.
 - A catch is a palm within `catchRadius` of the ball's path. The test is swept between frames so a
   fast ball cannot skip past a hand.
+- A soft ring marks where the ball will arrive, over the last 9 m of its flight (`aimHint` in `config.js`).
+- The scoreboard shows streaks, the end card shows your best streak, and your best score is remembered
+  in the browser. Taking the headset off pauses the game.
 
 ## Files
 
@@ -42,6 +50,7 @@ or deploy `npm run build` output (`dist/`) to any HTTPS host.
 | `src/game.js` | `GameSystem`: round state machine, ball flight, catch detection, scoring, restart |
 | `src/stadium.js` | Ground, pitch, stumps, and the scenery (fence, trees, bushes, tent, rocks) |
 | `src/coach.js` | The animated coach, with a procedural bat in hand |
+| `src/desktop-hand.js` | Mouse-controlled hand for visitors without a headset |
 | `src/assets.js` | Asset list for IWSDK's loader |
 | `ASSETS.md` | Where every model and sound came from, and its licence |
 | `src/hud.js` | World-space scoreboard and title / round-over card (canvas textures) |
@@ -73,6 +82,19 @@ that the ball swings, that the swing grows, and that the page logs no errors.
 The rounds are stepped at a fixed 60 Hz inside the page, and the palm is placed on the ball's grip space
 directly. The software renderer in a container runs at a few frames per second, so real-time play would take
 many minutes. The emulator's hand-tracking path was checked separately with a single 8-ball run.
+
+## Deploy
+
+`npm run build` writes a static site to `dist/` (relative paths, so it works under any sub-path). Host it on
+any HTTPS static host; WebXR needs HTTPS. Two ways:
+
+- **GitHub Pages:** `.github/workflows/pages.yml` builds and publishes it. Merge to `main`, then in the repo
+  go to Settings > Pages and set Source to "GitHub Actions". The link will be
+  `https://<user>.github.io/<repo>/`. The workflow has not been run yet.
+- **Vercel / Netlify:** import the repo, set the root directory to `cricket-xr`, build command
+  `npm run build`, output directory `dist`.
+
+Then open the link in the Quest browser and press Enter XR.
 
 ## Not yet verified
 

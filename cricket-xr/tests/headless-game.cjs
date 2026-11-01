@@ -25,6 +25,7 @@ const MAX_KMH = Math.round((22 + 1.5) * 3.6); // top speed incl. jitter
 
   await page.goto('https://localhost:8081/?balls=' + BALLS);
   await page.waitForFunction(() => window.__game && window.__world, null, { timeout: 30000 });
+  await page.evaluate((n) => localStorage.removeItem('cricket-catch-best-' + n), BALLS);
   await page.evaluate(() => {
     window.IWER_DEVICE.primaryInputMode = 'hand';
     window.__world.launchXR();
@@ -71,7 +72,7 @@ const MAX_KMH = Math.round((22 + 1.5) * 3.6); // top speed incl. jitter
             return;
           }
           if (!cur) {
-            cur = { kmh: sys.kmh, maxDev: 0, x0: sys.ball.position.x, z0: sys.ball.position.z };
+            cur = { kmh: sys.kmh, maxDev: 0, x0: sys.ball.position.x, z0: sys.ball.position.z, ring: false };
             flown.push(cur);
           }
           // Deviation of the ball's x from the straight line to where it was aimed.
@@ -79,6 +80,7 @@ const MAX_KMH = Math.round((22 + 1.5) * 3.6); // top speed incl. jitter
           const k = (p.z - cur.z0) / (a.z - cur.z0);
           const lineX = cur.x0 + (a.x - cur.x0) * k;
           cur.maxDev = Math.max(cur.maxDev, Math.abs(p.x - lineX));
+          cur.ring = cur.ring || window.__game.aimRingVisible;
           if (catchAll) placeGrip('right', p);
         },
       );
@@ -86,7 +88,9 @@ const MAX_KMH = Math.round((22 + 1.5) * 3.6); // top speed incl. jitter
         score: sys.score,
         misses: sys.misses,
         ballNo: sys.ballNo,
-        balls: flown.map((b) => ({ kmh: b.kmh, maxDev: +b.maxDev.toFixed(2) })),
+        bestStreak: sys.bestStreak,
+        saved: Number(localStorage.getItem('cricket-catch-best-' + balls)) || 0,
+        balls: flown.map((b) => ({ kmh: b.kmh, maxDev: +b.maxDev.toFixed(2), ring: b.ring })),
       });
     };
 
@@ -103,6 +107,41 @@ const MAX_KMH = Math.round((22 + 1.5) * 3.6); // top speed incl. jitter
 
     return { rounds, restartedState, balls };
   }, { balls: BALLS });
+
+  // Desktop visitors (no headset): the mouse is the hand. Play a whole round with it.
+  const desk = await browser.newPage({ ignoreHTTPSErrors: true, viewport: { width: 900, height: 700 } });
+  desk.on('pageerror', (e) => errors.push('desktop: ' + e.message));
+  await desk.goto('https://localhost:8081/?balls=6');
+  await desk.waitForFunction(() => window.__game && window.__world, null, { timeout: 30000 });
+  await desk.waitForTimeout(1000);
+  const mouse = await desk.evaluate(() => {
+    const sys = window.__game.sys;
+    const el = sys.world.renderer.domElement;
+    const cam = sys.world.camera;
+    const V = sys.aim.constructor;
+    const move = (point) => {
+      cam.updateMatrixWorld(true);
+      const p = new V().copy(point).project(cam);
+      const r = el.getBoundingClientRect();
+      el.dispatchEvent(new PointerEvent('pointermove', { clientX: r.left + ((p.x + 1) / 2) * r.width, clientY: r.top + ((1 - p.y) / 2) * r.height }));
+    };
+    move(sys.marker.position); // mouse over the green ball
+    sys.update(1 / 60);
+    const handShown = sys.desktop.active;
+    // Touch the green ball to start, as a player would.
+    for (let i = 0; i < 600 && sys.state === 'idle'; i++) {
+      sys.lockout = 0;
+      move(sys.marker.position);
+      sys.update(1 / 60);
+    }
+    const started = sys.state !== 'idle';
+    for (let i = 0; i < 60 * 60 * 5 && sys.state !== 'over'; i++) {
+      if (sys.state === 'swinging' || sys.state === 'flying') move(sys.aim);
+      sys.update(1 / 60);
+    }
+    return { handShown, started, score: sys.score, misses: sys.misses, state: sys.state };
+  });
+  console.log('desktop', JSON.stringify(mouse));
 
   const [A, B] = run.rounds;
   console.log(JSON.stringify(run));
@@ -125,6 +164,10 @@ const MAX_KMH = Math.round((22 + 1.5) * 3.6); // top speed incl. jitter
     'speed stays at or under the cap': speeds.every((v) => v <= MAX_KMH),
     'ball swings in the air': bends,
     'swing grows from first to last balls': mean(log.slice(-k).map((r) => r.maxDev)) > mean(log.slice(0, k).map((r) => r.maxDev)),
+    'aim ring shows during every ball': log.length === BALLS && log.every((r) => r.ring),
+    'streak counts consecutive catches': A.bestStreak === BALLS && B.bestStreak === 0,
+    'best score is saved': A.saved === BALLS,
+    'desktop: mouse hand starts the round and catches every ball': mouse.handShown && mouse.started && mouse.score === 6 && mouse.misses === 0,
     'no page errors': errors.length === 0,
   };
   for (const [name, ok] of Object.entries(checks)) console.log(ok ? 'PASS' : 'FAIL', name);

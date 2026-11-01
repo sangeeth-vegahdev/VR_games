@@ -1,17 +1,39 @@
 import {
   createSystem,
+  DoubleSide,
   Mesh,
+  MeshBasicMaterial,
   MeshStandardMaterial,
+  RingGeometry,
   SphereGeometry,
   Vector3,
+  VisibilityState,
 } from '@iwsdk/core';
 import { CFG, CONTACT_T, RELEASE, RESTART_POS, RESTART_RADIUS } from './config.js';
 import { Coach } from './coach.js';
+import { DesktopHand } from './desktop-hand.js';
 import { Effects, Sound } from './fx.js';
 import { COLORS, Hud } from './hud.js';
 import { buildStadium } from './stadium.js';
 
 const lerp = (a, b, t) => a + (b - a) * t;
+
+// Best score is remembered per round length. Storage can be blocked, so it is always optional.
+const bestKey = () => `cricket-catch-best-${CFG.balls}`;
+function loadBest() {
+  try {
+    return Number(localStorage.getItem(bestKey())) || 0;
+  } catch (e) {
+    return 0;
+  }
+}
+function saveBest(value) {
+  try {
+    localStorage.setItem(bestKey(), String(value));
+  } catch (e) {
+    /* not saved: fine */
+  }
+}
 
 // Round flow: idle -> ready -> swinging -> flying -> feedback -> (ready ... | over) -> ready ...
 export class GameSystem extends createSystem({}) {
@@ -36,6 +58,18 @@ export class GameSystem extends createSystem({}) {
     this.marker.position.set(RESTART_POS.x, RESTART_POS.y, RESTART_POS.z);
     this.world.createTransformEntity(this.marker);
 
+    // A soft ring at the spot the ball is heading for, shown over the last stretch of its flight.
+    this.aimRing = new Mesh(
+      new RingGeometry(0.15, 0.19, 40),
+      new MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.4, side: DoubleSide, depthWrite: false }),
+    );
+    this.aimRing.renderOrder = 5;
+    this.aimRing.visible = false;
+    this.world.createTransformEntity(this.aimRing);
+
+    this.desktop = new DesktopHand(this.world);
+    this.cleanupFuncs.push(() => this.desktop.dispose());
+
     this.palm = { left: new Vector3(), right: new Vector3() };
     this.palmOk = { left: false, right: false };
     this.prev = new Vector3();
@@ -59,8 +93,19 @@ export class GameSystem extends createSystem({}) {
     this.life = 0;
     this.heldBy = null;
     this.throwSpeed = 0;
+    this.streak = 0;
+    this.bestStreak = 0;
+    this.best = loadBest();
+    this.paused = false;
 
-    this.hud.showCard('Cricket Catch', [{ text: `Catch ${CFG.balls} balls with your hands` }], 'Touch the green ball to start');
+    this.hud.showCard(
+      'Cricket Catch',
+      [
+        { text: `Catch ${CFG.balls} balls with your hands` },
+        { text: this.best ? `Your best: ${this.best} / ${CFG.balls}` : 'On a PC, move the mouse to catch' },
+      ],
+      'Touch the green ball to start',
+    );
 
     const onKey = (e) => {
       this.sound.unlock();
@@ -87,6 +132,9 @@ export class GameSystem extends createSystem({}) {
       get aim() { return this.sys.aim; },
       get ballPos() { return this.sys.ball.position; },
       get ballVisible() { return this.sys.ball.visible; },
+      get aimRingVisible() { return this.sys.aimRing.visible; },
+      get streak() { return this.sys.streak; },
+      get best() { return this.sys.best; },
       sys: this,
       start: () => this.tryStart(),
     };
@@ -102,8 +150,11 @@ export class GameSystem extends createSystem({}) {
     this.score = 0;
     this.misses = 0;
     this.kmh = 0;
+    this.streak = 0;
+    this.bestStreak = 0;
     this.heldBy = null;
     this.ball.visible = false;
+    this.aimRing.visible = false;
     this.marker.visible = false;
     this.fx.clearTrail();
     this.hud.hideCard();
@@ -125,7 +176,8 @@ export class GameSystem extends createSystem({}) {
     this.swingA = lerp(CFG.swingBase, CFG.swingMax, ramp);
 
     // Arrival point: around chest height, wherever the headset currently is.
-    this.player.head.getWorldPosition(this.head);
+    // In a headset use the real head; on a PC the camera stands in for it.
+    (this.world.session ? this.player.head : this.world.camera).getWorldPosition(this.head);
     this.aim.set(
       (Math.random() * 2 - 1) * CFG.targetSpreadX,
       this.head.y - CFG.chestBelowHead + (Math.random() * 2 - 1) * CFG.targetSpreadY,
@@ -150,6 +202,7 @@ export class GameSystem extends createSystem({}) {
       dz / flight,
     );
     this.swingT = null;
+    this.aimRing.position.copy(this.aim);
     this.ball.position.set(RELEASE.x, RELEASE.y, RELEASE.z);
     this.ball.visible = true;
     this.life = 0;
@@ -163,11 +216,14 @@ export class GameSystem extends createSystem({}) {
     this.timer = CFG.feedbackDelay;
     this.heldBy = side;
     this.score++;
+    this.streak++;
+    this.bestStreak = Math.max(this.bestStreak, this.streak);
+    this.aimRing.visible = false;
     this.fx.burst(this.palm[side]);
     this.sound.caught();
     this.coach.cheer();
     this.hud.set({ score: this.score });
-    this.message('CAUGHT!', COLORS.good, CFG.feedbackDelay);
+    this.message(this.streak >= 3 ? `CAUGHT!  ${this.streak} in a row` : 'CAUGHT!', COLORS.good, CFG.feedbackDelay);
   }
 
   missed() {
@@ -176,6 +232,8 @@ export class GameSystem extends createSystem({}) {
     this.heldBy = null;
     this.ball.visible = false;
     this.misses++;
+    this.streak = 0;
+    this.aimRing.visible = false;
     this.sound.missed();
     this.coach.shrug();
     this.hud.set({ misses: this.misses });
@@ -201,12 +259,18 @@ export class GameSystem extends createSystem({}) {
     const ratio = this.score / CFG.balls;
     const rating =
       ratio >= 0.95 ? 'Legendary hands!' : ratio >= 0.8 ? 'Safe hands!' : ratio >= 0.5 ? 'Good catching' : 'Keep practising';
+    const record = this.score > this.best;
+    if (record) {
+      this.best = this.score;
+      saveBest(this.best);
+    }
     this.hud.set({ message: '' });
     this.hud.showCard(
       'Round over',
       [
         { text: `Final score  ${this.score} / ${CFG.balls}`, color: COLORS.good },
-        { text: rating, color: COLORS.ink },
+        { text: record ? `${rating}  New best!` : rating, color: COLORS.ink },
+        { text: `Best streak ${this.bestStreak}   |   Best ${this.best}` },
       ],
       'Touch the green ball to play again',
     );
@@ -220,6 +284,14 @@ export class GameSystem extends createSystem({}) {
 
   // ---------- helpers ----------
   readPalms() {
+    this.desktop.update();
+    if (this.desktop.active) {
+      // No headset: the mouse is the right hand.
+      this.palm.right.copy(this.desktop.position);
+      this.palmOk.right = true;
+      this.palmOk.left = false;
+      return;
+    }
     for (const side of ['left', 'right']) {
       const space = this.player.gripSpaces[side];
       space.getWorldPosition(this.palm[side]);
@@ -243,6 +315,9 @@ export class GameSystem extends createSystem({}) {
   // ---------- frame ----------
   update(dt) {
     dt = Math.min(dt, 0.05);
+    // Take the headset off (or open the system menu) and the game waits.
+    this.paused = this.world.visibilityState.peek() === VisibilityState.VisibleBlurred;
+    if (this.paused) return;
     this.readPalms();
     this.fx.update(dt);
     if (this.lockout > 0) this.lockout -= dt;
@@ -272,11 +347,20 @@ export class GameSystem extends createSystem({}) {
         break;
     }
 
+    this.updateAimRing();
+
     if (this.messageTimer > 0) {
       this.messageTimer -= dt;
       if (this.messageTimer <= 0 && this.state !== 'over') this.hud.set({ message: '' });
     }
     this.marker.rotation.y += dt;
+  }
+
+  // Over the last stretch of the flight, a pulsing ring marks where the ball will arrive.
+  updateAimRing() {
+    const show = CFG.aimHint && this.state === 'flying' && this.ball.position.z > CFG.aimHintFromZ;
+    this.aimRing.visible = show;
+    if (show) this.aimRing.scale.setScalar(1 + 0.12 * Math.sin(this.life * 14));
   }
 
   updateRestart() {
