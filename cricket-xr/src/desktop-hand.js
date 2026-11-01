@@ -1,3 +1,4 @@
+import { CFG } from './config.js';
 import {
   DoubleSide,
   Group,
@@ -13,7 +14,7 @@ import {
 
 // Mouse-controlled hand for visitors without a headset: the pointer moves a hand on the plane
 // where balls arrive. It switches itself off as soon as an XR session starts.
-const CATCH_PLANE_Z = -0.6;
+const CATCH_PLANE_Z = CFG.arriveZ;
 
 export class DesktopHand {
   constructor(world) {

@@ -83,6 +83,12 @@ The rounds are stepped at a fixed 60 Hz inside the page, and the palm is placed 
 directly. The software renderer in a container runs at a few frames per second, so real-time play would take
 many minutes. The emulator's hand-tracking path was checked separately with a single 8-ball run.
 
+## Preview footage
+
+`tests/record-preview.cjs` records a short player's-eye clip of a 3-ball round (catch, miss, catch) from the
+emulator as PNG frames; the header of the file has the ffmpeg line to turn them into a video. It is a quick
+preview, not a substitute for footage from a real headset.
+
 ## Deploy
 
 `npm run build` writes a static site to `dist/` (relative paths, so it works under any sub-path). Host it on

@@ -12,9 +12,10 @@ export const CFG = {
   swingMax: 7, // faster balls are airborne for less time, so swing must grow to keep bending
   gravity: 3, // stylised, so the ball arcs gently instead of dropping like a stone
   catchRadius: 0.25, // palm-to-ball distance that counts as a catch
-  targetSpreadX: 0.5, // random arrival offset left/right of the body line
-  targetSpreadY: 0.2, // random arrival offset up/down
-  chestBelowHead: 0.45, // arrival height, measured below the headset
+  arriveZ: -0.65, // how far in front of the player the ball arrives: comfortable arm's reach
+  targetSpreadX: 0.35, // random arrival offset left/right (kept inside the headset's field of view)
+  targetSpreadY: 0.15, // random arrival offset up/down
+  chestBelowHead: 0.4, // arrival height, measured below the headset
   readyDelay: 0.9,
   feedbackDelay: 1.0,
   restartLockout: 1.0,

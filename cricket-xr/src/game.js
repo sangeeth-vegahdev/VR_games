@@ -48,6 +48,13 @@ export class GameSystem extends createSystem({}) {
       new SphereGeometry(0.08, 24, 16),
       new MeshStandardMaterial({ color: 0xcc1f1f, roughness: 0.4, emissive: 0x330404 }),
     );
+    // A soft glow, so the ball can be followed from 18 m away where it is only a dot.
+    this.ball.add(
+      new Mesh(
+        new SphereGeometry(0.17, 16, 12),
+        new MeshBasicMaterial({ color: 0xff6a5a, transparent: true, opacity: 0.28, depthWrite: false }),
+      ),
+    );
     this.ball.visible = false;
     this.world.createTransformEntity(this.ball);
 
@@ -181,7 +188,7 @@ export class GameSystem extends createSystem({}) {
     this.aim.set(
       (Math.random() * 2 - 1) * CFG.targetSpreadX,
       this.head.y - CFG.chestBelowHead + (Math.random() * 2 - 1) * CFG.targetSpreadY,
-      -0.5,
+      CFG.arriveZ,
     );
 
     this.swingT = 0;
