@@ -2,8 +2,9 @@
 
 A coach swings a bat, the ball flies at you (it swings in the air and gets faster every ball) and you
 catch it with your bare hands. 50 balls per round, score and misses, then touch the green ball to
-play again. Built on the Meta Immersive Web SDK (IWSDK, Three.js based). No models, textures or audio
-files: the stadium, coach, sounds and effects are all generated in code.
+play again. Built on the Meta Immersive Web SDK (IWSDK, Three.js based). A village-green cricket ground
+with a bat-swinging coach, using free CC0 models and sounds (see `ASSETS.md`); the pitch, bat, ball, HUD
+and effects are generated in code.
 
 ## Run it
 
@@ -39,9 +40,12 @@ or deploy `npm run build` output (`dist/`) to any HTTPS host.
 |---|---|
 | `src/config.js` | All tuning: balls per round, difficulty ramp, speeds, swing, catch radius, delays |
 | `src/game.js` | `GameSystem`: round state machine, ball flight, catch detection, scoring, restart |
-| `src/stadium.js` | Pitch, stands, crowd, floodlights, coach and bat |
+| `src/stadium.js` | Ground, pitch, stumps, and the scenery (fence, trees, bushes, tent, rocks) |
+| `src/coach.js` | The animated coach, with a procedural bat in hand |
+| `src/assets.js` | Asset list for IWSDK's loader |
+| `ASSETS.md` | Where every model and sound came from, and its licence |
 | `src/hud.js` | World-space scoreboard and title / round-over card (canvas textures) |
-| `src/fx.js` | Generated sounds, catch particles, ball trail |
+| `src/fx.js` | Sound (CC0 files, with generated fallbacks), catch particles, ball trail |
 | `iwsdk.config.json`, `public/scenes/` | IWSDK project config (hand tracking on) and the sky |
 | `tests/headless-game.cjs` | End-to-end test with emulated hands |
 

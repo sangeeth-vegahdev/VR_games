@@ -8,18 +8,57 @@ import {
 // Generated sound (no audio files) plus pooled particles and a ball trail.
 // Everything is allocated up front, nothing in the frame loop.
 
+// Kenney sound effects (CC0), decoded on first use. Until a file is ready, the generated
+// tone for the same event plays instead, so the game is never silent.
+const FILES = { hit: 'hit', coin: 'coin', hurt: 'hurt', level: 'level_up', ui: 'ui' };
+
 export class Sound {
   constructor() {
     this.ctx = null;
     this.noise = null;
+    this.buffers = {};
   }
 
   unlock() {
     try {
+      const first = !this.ctx;
       this.ctx = this.ctx || new (window.AudioContext || window.webkitAudioContext)();
       if (this.ctx.state === 'suspended') this.ctx.resume();
+      if (first) this.preload();
     } catch (e) {
       this.ctx = null;
+    }
+  }
+
+  preload() {
+    const base = import.meta.env.BASE_URL;
+    for (const [name, file] of Object.entries(FILES)) {
+      fetch(`${base}audio/${file}.ogg`)
+        .then((r) => r.arrayBuffer())
+        .then((data) => this.ctx.decodeAudioData(data))
+        .then((buffer) => {
+          this.buffers[name] = buffer;
+        })
+        .catch(() => {
+          /* keep the generated fallback */
+        });
+    }
+  }
+
+  // Plays a decoded file; returns false when it is not ready so the caller can fall back.
+  file(name, volume = 0.7) {
+    const buffer = this.buffers[name];
+    if (!this.ctx || !buffer) return false;
+    try {
+      const src = this.ctx.createBufferSource();
+      const gain = this.ctx.createGain();
+      src.buffer = buffer;
+      gain.gain.value = volume;
+      src.connect(gain).connect(this.ctx.destination);
+      src.start();
+      return true;
+    } catch (e) {
+      return false;
     }
   }
 
@@ -42,8 +81,8 @@ export class Sound {
     }
   }
 
-  // Short noise burst: the bat hitting the ball.
-  crack() {
+  // Short noise burst: the bat hitting the ball (fallback for hit.ogg).
+  noiseCrack() {
     if (!this.ctx) return;
     try {
       if (!this.noise) {
@@ -63,16 +102,25 @@ export class Sound {
     }
   }
 
+  crack() {
+    if (!this.file('hit', 0.9)) this.noiseCrack();
+  }
+
   caught() {
-    this.tone(660, 990, 0.22, 'triangle');
+    this.tone(660, 990, 0.22, 'triangle', 0.12);
+    if (!this.file('coin', 0.6)) this.tone(880, 1320, 0.18, 'triangle', 0.12);
   }
 
   missed() {
-    this.tone(220, 110, 0.35, 'sawtooth');
+    if (!this.file('hurt', 0.5)) this.tone(220, 110, 0.35, 'sawtooth');
   }
 
   over() {
-    this.tone(392, 784, 0.5, 'triangle');
+    if (!this.file('level', 0.7)) this.tone(392, 784, 0.5, 'triangle');
+  }
+
+  start() {
+    if (!this.file('ui', 0.6)) this.tone(520, 780, 0.12, 'triangle', 0.15);
   }
 }
 

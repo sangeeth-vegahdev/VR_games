@@ -23,11 +23,12 @@ export const CFG = {
 };
 
 export const COACH_Z = -18;
-export const RELEASE = { x: 0, y: 1.2, z: -16.5 };
-export const SWING_T = 0.35; // bat swing, seconds
-export const RETURN_T = 0.5; // bat return, seconds
-export const READY_ANGLE = (-70 * Math.PI) / 180; // bat raised behind the coach
-export const FOLLOW_ANGLE = (120 * Math.PI) / 180; // follow-through in front
+export const COACH_HEIGHT = 2.6; // metres: oversized on purpose, so the swing reads from 18 m away
+export const RELEASE = { x: 0, y: 1.5, z: -16.2 };
+// The ball leaves the bat this many seconds into the swing clip (attack-melee-right is 0.42 s long).
+export const CONTACT_T = 0.2;
+// Where the bat sits in the right-arm bone's space (bone units; tuned by eye).
+export const BAT_MOUNT = { position: [-0.17, 0, 0], rotation: [0.45, 0, -0.29], length: 1.5 };
 
 export const RESTART_POS = { x: 0, y: 1.25, z: -0.65 };
 export const RESTART_RADIUS = 0.2;

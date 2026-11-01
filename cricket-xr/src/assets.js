@@ -1,42 +1,26 @@
-/**
- * Copyright (c) Meta Platforms, Inc. and affiliates.
- *
- * This source code is licensed under the MIT license found in the
- * LICENSE file in the root directory of this source tree.
- */
 import { AssetType, defineAssets } from '@iwsdk/core';
-import { createGallerySet, createSideboardSet, } from './scene-assets/decor.scene-asset.js';
-import { createGraphiteCube, createGraphiteGem, createGraphiteKnot, createGraphiteRing, createPlinth, createStage, createStudioFloor, } from './scene-assets/studio.scene-asset.js';
-const publicAssetUrl = (filePath) => `${import.meta.env.BASE_URL}${filePath.replace(/^\/+/u, '')}`;
-const DEFAULT_STOCK_ASSET_BASE = 'https://cdn.jsdelivr.net/npm/@iwsdk/example-assets@0.4.2/assets';
-const configuredStockAssetBase = import.meta.env.VITE_IWSDK_EXAMPLE_ASSET_BASE_URL?.trim();
-const stockAssetBase = (configuredStockAssetBase || DEFAULT_STOCK_ASSET_BASE).replace(/\/+$/u, '');
-function stockAssetUrl(assetId, fileName) {
-    return `${stockAssetBase}/${assetId}/${fileName}`;
-}
-const uikitml = (fileName, name) => ({
-    url: publicAssetUrl(`ui/${fileName}`),
-    type: AssetType.UIKitML,
-    name,
+
+// Evaluated by both the app and the editor: keep it deterministic and free of side effects.
+// All models are CC0 (Quaternius / Kenney); see ASSETS.md.
+const url = (file) => `${import.meta.env.BASE_URL}${file.replace(/^\/+/u, '')}`;
+
+const model = (file, name) => ({
+  url: url(`models/${file}`),
+  type: AssetType.GLTF,
+  name,
+  priority: 'critical',
 });
+
 export default defineAssets({
-    'studio-floor': createStudioFloor(),
-    stage: createStage(),
-    plinth: createPlinth(),
-    'graphite-cube': createGraphiteCube(),
-    'graphite-gem': createGraphiteGem(),
-    'graphite-knot': createGraphiteKnot(),
-    'graphite-ring': createGraphiteRing(),
-    'gallery-set': createGallerySet(),
-    'sideboard-set': createSideboardSet(),
-    robot: {
-        url: stockAssetUrl('robot', 'robot.gltf'),
-        type: AssetType.GLTF,
-        name: 'Robot',
-        priority: 'lazy',
-    },
-    'welcome-panel': uikitml('welcome.uikitml', 'Welcome Panel'),
-    'label-grab': uikitml('label-grab.uikitml', 'Grab Label'),
-    'label-select': uikitml('label-select.uikitml', 'Select Label'),
-    'label-spin': uikitml('label-spin.uikitml', 'Spin Label'),
+  coach: model('coach.glb', 'Coach'),
+  'tree-oak': model('tree_oak.glb', 'Oak tree'),
+  'tree-pine': model('tree_pine.glb', 'Pine tree'),
+  'tree-pine-tall': model('tree_pine_tall.glb', 'Tall pine tree'),
+  'tree-fat': model('tree_fat.glb', 'Round tree'),
+  bush: model('bush.glb', 'Bush'),
+  'bush-large': model('bush_large.glb', 'Large bush'),
+  fence: model('fence.glb', 'Fence'),
+  tent: model('tent.glb', 'Pavilion tent'),
+  'rock-large': model('rock_large.glb', 'Large rock'),
+  'rock-small': model('rock_small.glb', 'Small rock'),
 });

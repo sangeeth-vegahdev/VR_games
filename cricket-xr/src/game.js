@@ -5,29 +5,21 @@ import {
   SphereGeometry,
   Vector3,
 } from '@iwsdk/core';
-import {
-  CFG,
-  FOLLOW_ANGLE,
-  READY_ANGLE,
-  RELEASE,
-  RESTART_POS,
-  RESTART_RADIUS,
-  RETURN_T,
-  SWING_T,
-} from './config.js';
+import { CFG, CONTACT_T, RELEASE, RESTART_POS, RESTART_RADIUS } from './config.js';
+import { Coach } from './coach.js';
 import { Effects, Sound } from './fx.js';
 import { COLORS, Hud } from './hud.js';
 import { buildStadium } from './stadium.js';
 
 const lerp = (a, b, t) => a + (b - a) * t;
-const smooth = (t) => t * t * (3 - 2 * t);
 
 // Round flow: idle -> ready -> swinging -> flying -> feedback -> (ready ... | over) -> ready ...
 export class GameSystem extends createSystem({}) {
   init() {
     this.sound = new Sound();
     this.fx = new Effects(this.world);
-    this.batPivot = buildStadium(this.world);
+    buildStadium(this.world);
+    this.coach = new Coach(this.world);
     this.hud = new Hud(this.world, CFG.balls);
 
     this.ball = new Mesh(
@@ -116,6 +108,7 @@ export class GameSystem extends createSystem({}) {
     this.fx.clearTrail();
     this.hud.hideCard();
     this.hud.set({ score: 0, misses: 0, ballNo: 0, kmh: 0 });
+    this.sound.start();
     this.state = 'ready';
     this.timer = CFG.readyDelay;
     this.message('Get ready', COLORS.ink, CFG.readyDelay);
@@ -140,6 +133,7 @@ export class GameSystem extends createSystem({}) {
     );
 
     this.swingT = 0;
+    this.coach.swing();
     this.state = 'swinging';
     this.hud.set({ ballNo: this.ballNo, kmh: this.kmh, message: '' });
   }
@@ -155,6 +149,7 @@ export class GameSystem extends createSystem({}) {
       (this.aim.y - RELEASE.y) / flight + 0.5 * CFG.gravity * flight,
       dz / flight,
     );
+    this.swingT = null;
     this.ball.position.set(RELEASE.x, RELEASE.y, RELEASE.z);
     this.ball.visible = true;
     this.life = 0;
@@ -170,6 +165,7 @@ export class GameSystem extends createSystem({}) {
     this.score++;
     this.fx.burst(this.palm[side]);
     this.sound.caught();
+    this.coach.cheer();
     this.hud.set({ score: this.score });
     this.message('CAUGHT!', COLORS.good, CFG.feedbackDelay);
   }
@@ -181,6 +177,7 @@ export class GameSystem extends createSystem({}) {
     this.ball.visible = false;
     this.misses++;
     this.sound.missed();
+    this.coach.shrug();
     this.hud.set({ misses: this.misses });
     this.message('MISSED', COLORS.bad, CFG.feedbackDelay);
   }
@@ -243,13 +240,6 @@ export class GameSystem extends createSystem({}) {
     return this.tmp.distanceTo(p);
   }
 
-  batAngle() {
-    const t = this.swingT;
-    if (t === null) return READY_ANGLE;
-    if (t < SWING_T) return lerp(READY_ANGLE, FOLLOW_ANGLE, smooth(t / SWING_T));
-    return lerp(FOLLOW_ANGLE, READY_ANGLE, smooth(Math.min(1, (t - SWING_T) / RETURN_T)));
-  }
-
   // ---------- frame ----------
   update(dt) {
     dt = Math.min(dt, 0.05);
@@ -257,11 +247,8 @@ export class GameSystem extends createSystem({}) {
     this.fx.update(dt);
     if (this.lockout > 0) this.lockout -= dt;
 
-    if (this.swingT !== null) {
-      this.swingT += dt;
-      if (this.swingT > SWING_T + RETURN_T) this.swingT = null;
-    }
-    this.batPivot.rotation.x = this.batAngle();
+    this.coach.update(dt);
+    if (this.swingT !== null) this.swingT += dt;
 
     switch (this.state) {
       case 'idle':
@@ -273,7 +260,7 @@ export class GameSystem extends createSystem({}) {
         if (this.timer <= 0) this.beginThrow();
         break;
       case 'swinging':
-        if (this.swingT !== null && this.swingT >= SWING_T / 2) this.launchBall();
+        if (this.swingT >= CONTACT_T) this.launchBall();
         break;
       case 'flying':
         this.updateFlight(dt);
