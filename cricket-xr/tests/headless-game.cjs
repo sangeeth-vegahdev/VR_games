@@ -2,7 +2,7 @@
 // Needs `npm run dev:runtime` running.
 // Usage: node tests/headless-game.cjs             (8-ball rounds, default)
 //        BALLS=50 node tests/headless-game.cjs    (full-length rounds)
-// Set CHROME_PATH to use a specific Chromium binary.
+// Set CHROME_PATH to use a specific Chromium binary. Set GAME_URL to test a built copy (npm run build, then npx vite preview).
 //
 // The software renderer here runs at a few fps, so real-time playback would take many minutes.
 // The rounds are therefore stepped at a fixed 60 Hz inside the page, and the palm is placed
@@ -10,6 +10,8 @@
 const { chromium } = require('playwright');
 
 const BALLS = Number(process.env.BALLS || 8);
+// Where the game is served: the dev server by default, or a built copy, e.g. GAME_URL=http://localhost:8082
+const GAME_URL = process.env.GAME_URL || 'https://localhost:8081';
 const RAMP_BALLS = 25; // keep in sync with CFG.rampBalls
 const MAX_KMH = Math.round((22 + 1.5) * 3.6); // top speed incl. jitter
 
@@ -23,7 +25,7 @@ const MAX_KMH = Math.round((22 + 1.5) * 3.6); // top speed incl. jitter
   page.on('pageerror', (e) => errors.push(e.message));
   page.on('console', (m) => m.type() === 'error' && !/ERR_TUNNEL|Failed to load resource/.test(m.text()) && errors.push(m.text()));
 
-  await page.goto('https://localhost:8081/?balls=' + BALLS);
+  await page.goto(GAME_URL + '/?balls=' + BALLS);
   await page.waitForFunction(() => window.__game && window.__world, null, { timeout: 30000 });
   await page.evaluate((n) => localStorage.removeItem('cricket-catch-best-' + n), BALLS);
   await page.evaluate(() => {
@@ -119,7 +121,7 @@ const MAX_KMH = Math.round((22 + 1.5) * 3.6); // top speed incl. jitter
   // Desktop visitors (no headset): the mouse is the hand. Play a whole round with it.
   const desk = await browser.newPage({ ignoreHTTPSErrors: true, viewport: { width: 900, height: 700 } });
   desk.on('pageerror', (e) => errors.push('desktop: ' + e.message));
-  await desk.goto('https://localhost:8081/?balls=6');
+  await desk.goto(GAME_URL + '/?balls=6');
   await desk.waitForFunction(() => window.__game && window.__world, null, { timeout: 30000 });
   await desk.waitForTimeout(1000);
   const mouse = await desk.evaluate(() => {
