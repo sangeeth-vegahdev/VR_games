@@ -2,8 +2,8 @@
 // emulated headset and hands. Needs `npm run dev:runtime` running.
 //   node tests/record-preview.cjs                  (frames go to ./preview-frames)
 //   ffmpeg -framerate 12 -i preview-frames/f%04d.png -c:v libx264 -pix_fmt yuv420p preview.mp4
-// Env: OUT=<frames dir>, CHROME_PATH=<chromium binary>. Palms are drawn as small stand-ins because a real
-// headset draws its own hand models. On a software renderer this takes several minutes; with a GPU it is fast.
+// Env: OUT=<frames dir>, CHROME_PATH=<chromium binary>. The hands are the game's own tracked hand models,
+// posed by the emulator. On a software renderer this takes several minutes; with a GPU it is fast.
 const fs = require('node:fs');
 const OUT = process.env.OUT || 'preview-frames';
 fs.mkdirSync(OUT, { recursive: true });
@@ -33,12 +33,7 @@ const W = 800, H = 450;
     s.update = () => {};
     // Tilt the head down ~15 degrees, as a player does to watch the catching area.
     await d.remote.dispatch('look_at', { device: 'headset', target: { x: 0, y: 0.85, z: -3.2 } });
-    // Stand-in palms, because a headset draws its own hand models.
-    const G = s.ball.geometry.constructor, M = s.ball.material.constructor, Mesh = s.ball.constructor;
     for (const side of ['left', 'right']) {
-      const palm = new Mesh(new G(0.07, 16, 12), new M({ color: 0xffc9a0, roughness: 0.6 }));
-      palm.scale.set(1, 0.4, 1.4);
-      s.player.gripSpaces[side].add(palm);
       d.hands[side].connected = true;
       await d.remote.dispatch('set_hand_pose', { device: 'hand-' + side, poseId: 'open' });
     }

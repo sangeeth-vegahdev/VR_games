@@ -25,8 +25,8 @@ or deploy `npm run build` output (`dist/`) to any HTTPS host.
 
 ## Play without a headset
 
-Open the page in a desktop browser: no headset is needed. Move the mouse to move your hand (the cyan ring)
-and touch the green ball to start. With a headset, press **Enter XR** and use your real hands.
+Open the page in a desktop browser: no headset is needed. Move the mouse to move your hand (a hand model
+inside a cyan ring that shows its catch reach) and touch the green ball to start. With a headset, press **Enter XR** and use your real hands.
 
 ## How it plays
 
@@ -39,6 +39,11 @@ and touch the green ball to start. With a headset, press **Enter XR** and use yo
 - A catch is a palm within `catchRadius` of the ball's path. The test is swept between frames so a
   fast ball cannot skip past a hand.
 - A soft ring marks where the ball will arrive, over the last 9 m of its flight (`aimHint` in `config.js`).
+- The ball is a cricket ball drawn in code: red leather and a stitched seam, held upright and leaning
+  towards the way it swings, spinning about the seam. A soft glow helps you pick it up off the bat and fades
+  as it reaches you so the leather shows.
+- Your hands are solid, skin-toned hand models driven by hand tracking (every finger moves). They ship with
+  the game (`public/models/hand-*.glb`) instead of the SDK's outline hands from a CDN, so they always appear.
 - The scoreboard shows streaks, the end card shows your best streak, and your best score is remembered
   in the browser. Taking the headset off pauses the game.
 
@@ -51,6 +56,8 @@ and touch the green ball to start. With a headset, press **Enter XR** and use yo
 | `src/stadium.js` | Ground, pitch, stumps, and the scenery (fence, trees, bushes, tent, rocks) |
 | `src/coach.js` | The animated coach, with a procedural bat in hand |
 | `src/desktop-hand.js` | Mouse-controlled hand for visitors without a headset |
+| `src/hands.js` | Solid hand models for hand tracking, loaded from the game's own files |
+| `src/ball.js` | The cricket ball: leather and seam texture drawn in code, glow that fades as it nears |
 | `src/assets.js` | Asset list for IWSDK's loader |
 | `ASSETS.md` | Where every model and sound came from, and its licence |
 | `src/hud.js` | World-space scoreboard and title / round-over card (canvas textures) |
@@ -77,7 +84,8 @@ CHROME_PATH=/path/to/chrome node tests/headless-game.cjs
 
 It starts an emulated XR session, then plays one round with every ball caught, restarts by touching the
 green ball, and plays a round with every ball missed. It checks that speed ramps up and stays under the cap,
-that the ball swings, that the swing grows, and that the page logs no errors.
+that the ball swings, that the swing grows, that both tracked hands are drawn with the game's own hand models,
+that a mouse player can finish a round, and that the page logs no errors (13 checks).
 
 The rounds are stepped at a fixed 60 Hz inside the page, and the palm is placed on the ball's grip space
 directly. The software renderer in a container runs at a few frames per second, so real-time play would take
@@ -105,5 +113,4 @@ Then open the link in the Quest browser and press Enter XR.
 ## Not yet verified
 
 Only tested in the IWER emulator with emulated hands. Not tested on a real Quest: real hand-tracking
-feel, comfort, audio start on device, and frame rate. The hand model files the SDK loads from a CDN
-need internet access.
+feel, comfort, audio start on device, and frame rate.

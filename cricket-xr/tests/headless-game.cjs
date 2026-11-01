@@ -33,6 +33,14 @@ const MAX_KMH = Math.round((22 + 1.5) * 3.6); // top speed incl. jitter
   await page.waitForFunction(() => !!window.__world.session, null, { timeout: 15000 });
   await page.waitForTimeout(1000); // a few real frames so the grip spaces are live
 
+  // Tracked hands are drawn with the game's own hand models (loaded from public/models, not a CDN).
+  const handsDrawn = await page
+    .waitForFunction(() => {
+      const h = window.__world.input.xr.visualAdapters.hand;
+      return ['left', 'right'].every((k) => h[k].visual && h[k].visual.constructor.name === 'SkinHand' && h[k].visual.model.visible);
+    }, null, { timeout: 15000 })
+    .then(() => true, () => false);
+
   const run = await page.evaluate(({ balls }) => {
     const sys = window.__game.sys;
     const V = sys.ball.position.constructor;
@@ -167,6 +175,7 @@ const MAX_KMH = Math.round((22 + 1.5) * 3.6); // top speed incl. jitter
     'aim ring shows during every ball': log.length === BALLS && log.every((r) => r.ring),
     'streak counts consecutive catches': A.bestStreak === BALLS && B.bestStreak === 0,
     'best score is saved': A.saved === BALLS,
+    'tracked hands drawn with the game\'s own hand models': handsDrawn,
     'desktop: mouse hand starts the round and catches every ball': mouse.handShown && mouse.started && mouse.score === 6 && mouse.misses === 0,
     'no page errors': errors.length === 0,
   };

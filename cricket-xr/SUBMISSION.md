@@ -31,10 +31,14 @@ you touch a green ball to play again. No headset? Open the link on a PC and use 
   range of the ball's path, tested along the path between frames so a fast ball cannot skip past a hand.
 - The ball's path is solved so that gravity and swing curve it into a chosen arrival point near the
   player's chest, wherever their head is, so it visibly bends but stays catchable.
-- Free CC0 art (Kenney, Quaternius) for the coach, scenery and sounds. The pitch, bat, ball, scoreboard
-  and effects are generated in code. The whole build is about 5 MB and about 130 draw calls.
+- Solid, skin-toned tracked hands (every finger follows your own) that ship with the game, so they appear
+  even on a network that blocks the SDK's hand-model CDN.
+- A cricket ball drawn in code: red leather, stitched seam held upright and leaning into the swing,
+  spinning about the seam, with a glow that helps you pick it up off the bat and fades as it reaches you.
+- Free CC0 art (Kenney, Quaternius) for the coach, scenery and sounds; an MIT hand model from the WebXR
+  input profiles. The pitch, bat, ball, scoreboard and effects are generated in code. The whole build is under 6 MB.
 - Tested in the IWER emulator with scripted hands: full 50-ball rounds, caught and missed, restart by
-  touch, rising speed and swing, and a full mouse-played round on desktop.
+  touch, rising speed and swing, both hands drawn, and a full mouse-played round on desktop.
 
 ## Challenges
 
@@ -78,4 +82,5 @@ device, what was learned].
 
 ## Credits
 
-3D models and sound effects: Kenney (kenney.nl) and Quaternius (quaternius.com), CC0. See `ASSETS.md`.
+3D models and sound effects: Kenney (kenney.nl) and Quaternius (quaternius.com), CC0. Hand model:
+`generic-hand` from WebXR Input Profiles (MIT). See `ASSETS.md`.

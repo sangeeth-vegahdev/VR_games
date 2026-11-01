@@ -9,10 +9,12 @@ import {
   Vector3,
   VisibilityState,
 } from '@iwsdk/core';
+import { makeBall, setGlowForDistance } from './ball.js';
 import { CFG, CONTACT_T, RELEASE, RESTART_POS, RESTART_RADIUS } from './config.js';
 import { Coach } from './coach.js';
 import { DesktopHand } from './desktop-hand.js';
 import { Effects, Sound } from './fx.js';
+import { useSkinHands } from './hands.js';
 import { COLORS, Hud } from './hud.js';
 import { buildStadium } from './stadium.js';
 
@@ -44,17 +46,7 @@ export class GameSystem extends createSystem({}) {
     this.coach = new Coach(this.world);
     this.hud = new Hud(this.world, CFG.balls);
 
-    this.ball = new Mesh(
-      new SphereGeometry(0.08, 24, 16),
-      new MeshStandardMaterial({ color: 0xcc1f1f, roughness: 0.4, emissive: 0x330404 }),
-    );
-    // A soft glow, so the ball can be followed from 18 m away where it is only a dot.
-    this.ball.add(
-      new Mesh(
-        new SphereGeometry(0.17, 16, 12),
-        new MeshBasicMaterial({ color: 0xff6a5a, transparent: true, opacity: 0.28, depthWrite: false }),
-      ),
-    );
+    this.ball = makeBall();
     this.ball.visible = false;
     this.world.createTransformEntity(this.ball);
 
@@ -73,6 +65,9 @@ export class GameSystem extends createSystem({}) {
     this.aimRing.renderOrder = 5;
     this.aimRing.visible = false;
     this.world.createTransformEntity(this.aimRing);
+
+    // Solid hands shipped with the game, instead of the SDK's outline hands from a CDN.
+    this.skinHands = useSkinHands(this.input && this.input.xr);
 
     this.desktop = new DesktopHand(this.world);
     this.cleanupFuncs.push(() => this.desktop.dispose());
@@ -105,14 +100,7 @@ export class GameSystem extends createSystem({}) {
     this.best = loadBest();
     this.paused = false;
 
-    this.hud.showCard(
-      'Cricket Catch',
-      [
-        { text: `Catch ${CFG.balls} balls with your hands` },
-        { text: this.best ? `Your best: ${this.best} / ${CFG.balls}` : 'On a PC, move the mouse to catch' },
-      ],
-      'Touch the green ball to start',
-    );
+    this.showTitle();
 
     const onKey = (e) => {
       this.sound.unlock();
@@ -126,7 +114,10 @@ export class GameSystem extends createSystem({}) {
       window.removeEventListener('pointerdown', onPointer);
     });
     this.cleanupFuncs.push(
-      this.world.visibilityState.subscribe(() => this.sound.unlock()),
+      this.world.visibilityState.subscribe(() => {
+        this.sound.unlock();
+        if (this.state === 'idle') this.showTitle(); // the hint differs in and out of a headset
+      }),
     );
 
     // Read-only view for the headless test.
@@ -142,12 +133,27 @@ export class GameSystem extends createSystem({}) {
       get aimRingVisible() { return this.sys.aimRing.visible; },
       get streak() { return this.sys.streak; },
       get best() { return this.sys.best; },
+      get skinHands() { return this.sys.skinHands; },
       sys: this,
       start: () => this.tryStart(),
     };
   }
 
   // ---------- flow ----------
+  showTitle() {
+    const inHeadset = !!this.world.session;
+    this.hud.showCard(
+      'Cricket Catch',
+      [
+        { text: `Catch ${CFG.balls} balls with your hands` },
+        this.best
+          ? { text: `Your best: ${this.best} / ${CFG.balls}` }
+          : { text: inHeadset ? 'Watch the ball swing, then reach for it' : 'On a PC, move the mouse to catch' },
+      ],
+      'Touch the green ball to start',
+    );
+  }
+
   tryStart() {
     if ((this.state === 'idle' || this.state === 'over') && this.lockout <= 0) this.startRound();
   }
@@ -211,6 +217,9 @@ export class GameSystem extends createSystem({}) {
     this.swingT = null;
     this.aimRing.position.copy(this.aim);
     this.ball.position.set(RELEASE.x, RELEASE.y, RELEASE.z);
+    // Seam upright, leaning a little towards the way the ball will swing, like a real swing ball.
+    this.ball.rotation.set(0, Math.random() * Math.PI * 2, Math.PI / 2 - this.side * 0.3);
+    setGlowForDistance(this.ball, CFG.arriveZ - RELEASE.z);
     this.ball.visible = true;
     this.life = 0;
     this.fx.clearTrail();
@@ -385,7 +394,8 @@ export class GameSystem extends createSystem({}) {
     this.vel.y -= CFG.gravity * dt;
     this.vel.x += this.side * this.swingA * dt; // the swing: sideways force in the air
     this.ball.position.addScaledVector(this.vel, dt);
-    this.ball.rotation.x += 14 * dt;
+    this.ball.rotation.y += 18 * dt; // spin about the seam
+    setGlowForDistance(this.ball, CFG.arriveZ - this.ball.position.z);
     this.life += dt;
     this.fx.trailPoint(this.ball.position, dt);
 
