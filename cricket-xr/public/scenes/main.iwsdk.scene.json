@@ -50,7 +50,7 @@
   "environment": {
     "toneMapping": "aces",
     "exposure": 1.0,
-    "shadows": false,
+    "shadows": true,
     "shadowMapType": "pcf"
   },
   "resources": {},

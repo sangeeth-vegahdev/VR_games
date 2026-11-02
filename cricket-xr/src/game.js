@@ -10,7 +10,7 @@ import {
   VisibilityState,
 } from '@iwsdk/core';
 import { makeBall, setGlowForDistance } from './ball.js';
-import { CFG, CONTACT_T, RELEASE, RESTART_POS, RESTART_RADIUS } from './config.js';
+import { CFG, RESTART_POS, RESTART_RADIUS } from './config.js';
 import { Coach } from './coach.js';
 import { DesktopHand } from './desktop-hand.js';
 import { Effects, Sound } from './fx.js';
@@ -79,13 +79,13 @@ export class GameSystem extends createSystem({}) {
     this.tmp = new Vector3();
     this.seg = new Vector3();
     this.aim = new Vector3();
+    this.release = new Vector3();
     this.head = new Vector3();
 
     this.state = 'idle';
     this.timer = 0;
     this.lockout = 0;
     this.messageTimer = 0;
-    this.swingT = null;
     this.ballNo = 0;
     this.score = 0;
     this.misses = 0;
@@ -94,6 +94,7 @@ export class GameSystem extends createSystem({}) {
     this.swingA = 0;
     this.life = 0;
     this.heldBy = null;
+    this.contactGap = 0;
     this.throwSpeed = 0;
     this.streak = 0;
     this.bestStreak = 0;
@@ -134,6 +135,7 @@ export class GameSystem extends createSystem({}) {
       get streak() { return this.sys.streak; },
       get best() { return this.sys.best; },
       get skinHands() { return this.sys.skinHands; },
+      get contactGap() { return this.sys.contactGap; },
       sys: this,
       start: () => this.tryStart(),
     };
@@ -197,8 +199,13 @@ export class GameSystem extends createSystem({}) {
       CFG.arriveZ,
     );
 
-    this.swingT = 0;
     this.coach.swing();
+    // The coach holds the ball, tosses it up and strikes it: the ball is shown from the start.
+    this.ball.scale.setScalar(this.coach.ballScale);
+    this.ball.position.copy(this.coach.ballPos);
+    setGlowForDistance(this.ball, CFG.arriveZ - this.ball.position.z);
+    this.ball.visible = true;
+    this.fx.clearTrail();
     this.state = 'swinging';
     this.hud.set({ ballNo: this.ballNo, kmh: this.kmh, message: '' });
   }
@@ -206,23 +213,23 @@ export class GameSystem extends createSystem({}) {
   // Contact: the ball leaves the bat. The path is solved so that swing and gravity
   // curve it INTO the arrival point, so it visibly bends but stays catchable.
   launchBall() {
-    const dz = this.aim.z - RELEASE.z;
-    const len = Math.hypot(this.aim.x - RELEASE.x, this.aim.y - RELEASE.y, dz);
+    const from = this.release.copy(this.coach.sweetSpot);
+    this.contactGap = this.coach.ballPos.distanceTo(from); // how far the tossed ball was from the bat
+    this.coach.releaseBall();
+    const dz = this.aim.z - from.z;
+    const len = Math.hypot(this.aim.x - from.x, this.aim.y - from.y, dz);
     const flight = len / this.throwSpeed;
     this.vel.set(
-      (this.aim.x - RELEASE.x) / flight - 0.5 * this.side * this.swingA * flight,
-      (this.aim.y - RELEASE.y) / flight + 0.5 * CFG.gravity * flight,
+      (this.aim.x - from.x) / flight - 0.5 * this.side * this.swingA * flight,
+      (this.aim.y - from.y) / flight + 0.5 * CFG.gravity * flight,
       dz / flight,
     );
-    this.swingT = null;
     this.aimRing.position.copy(this.aim);
-    this.ball.position.set(RELEASE.x, RELEASE.y, RELEASE.z);
+    this.ball.position.copy(from);
     // Seam upright, leaning a little towards the way the ball will swing, like a real swing ball.
     this.ball.rotation.set(0, Math.random() * Math.PI * 2, Math.PI / 2 - this.side * 0.3);
-    setGlowForDistance(this.ball, CFG.arriveZ - RELEASE.z);
-    this.ball.visible = true;
+    setGlowForDistance(this.ball, CFG.arriveZ - from.z);
     this.life = 0;
-    this.fx.clearTrail();
     this.sound.crack();
     this.state = 'flying';
   }
@@ -339,7 +346,6 @@ export class GameSystem extends createSystem({}) {
     if (this.lockout > 0) this.lockout -= dt;
 
     this.coach.update(dt);
-    if (this.swingT !== null) this.swingT += dt;
 
     switch (this.state) {
       case 'idle':
@@ -351,7 +357,8 @@ export class GameSystem extends createSystem({}) {
         if (this.timer <= 0) this.beginThrow();
         break;
       case 'swinging':
-        if (this.swingT >= CONTACT_T) this.launchBall();
+        this.ball.position.copy(this.coach.ballPos);
+        if (this.coach.hasStruck) this.launchBall();
         break;
       case 'flying':
         this.updateFlight(dt);
@@ -395,6 +402,8 @@ export class GameSystem extends createSystem({}) {
     this.vel.x += this.side * this.swingA * dt; // the swing: sideways force in the air
     this.ball.position.addScaledVector(this.vel, dt);
     this.ball.rotation.y += 18 * dt; // spin about the seam
+    // Real size in the coach's hand, growing to the game's catchable size as it leaves the bat.
+    this.ball.scale.setScalar(Math.min(1, this.coach.ballScale + this.life * 2.5));
     setGlowForDistance(this.ball, CFG.arriveZ - this.ball.position.z);
     this.life += dt;
     this.fx.trailPoint(this.ball.position, dt);

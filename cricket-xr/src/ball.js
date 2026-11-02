@@ -85,6 +85,7 @@ export function makeBall() {
     new MeshStandardMaterial({ map: leatherTexture(), roughness: 0.45, metalness: 0, emissive: 0x2a0303 }),
   );
   ball.rotation.order = 'ZYX'; // spin (y) is applied first, then the seam tilt (z)
+  ball.castShadow = true; // its shadow on the pitch helps judge where it will land
   // A soft glow, so the ball can be followed from 18 m away where it is only a dot.
   // It fades out as the ball comes close (see setGlowForDistance), so the leather and seam show.
   const glow = new Mesh(

@@ -58,7 +58,7 @@ export class Hud {
   constructor(world, balls) {
     this.balls = balls;
     // Scoreboard above the ball's flight path, in front of the player.
-    this.board = new Panel(world, 2.4, 1.0, 400, [0, 2.45, -3.4]);
+    this.board = new Panel(world, 2.4, 1.0, 400, [0, 2.6, -3.4]); // above the sightscreen, so it never hides the ball
     // Round-over / title card, closer and lower.
     this.card = new Panel(world, 2.0, 1.2, 400, [0, 1.8, -1.6]);
     this.card.mesh.visible = false;

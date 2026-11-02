@@ -25,13 +25,9 @@ export const CFG = {
   missZ: 0.2, // a ball past this z (behind the hands) is missed
 };
 
-export const COACH_Z = -18;
-export const COACH_HEIGHT = 2.6; // metres: oversized on purpose, so the swing reads from 18 m away
-export const RELEASE = { x: 0, y: 1.5, z: -16.2 };
-// The ball leaves the bat this many seconds into the swing clip (attack-melee-right is 0.42 s long).
-export const CONTACT_T = 0.2;
-// Where the bat sits in the right-arm bone's space (bone units; tuned by eye).
-export const BAT_MOUNT = { position: [-0.17, 0, 0], rotation: [0.45, 0, -0.29], length: 1.5 };
+export const COACH_Z = -17;
+export const COACH_HEIGHT = 1.88; // metres, cap included: a tall, real-sized coach
+// The ball now leaves from the bat's sweet spot at the moment of contact (see coach.js).
 
 export const RESTART_POS = { x: 0, y: 1.25, z: -0.65 };
 export const RESTART_RADIUS = 0.2;

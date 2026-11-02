@@ -82,7 +82,7 @@ const MAX_KMH = Math.round((22 + 1.5) * 3.6); // top speed incl. jitter
             return;
           }
           if (!cur) {
-            cur = { kmh: sys.kmh, maxDev: 0, x0: sys.ball.position.x, z0: sys.ball.position.z, ring: false };
+            cur = { kmh: sys.kmh, maxDev: 0, x0: sys.ball.position.x, z0: sys.ball.position.z, ring: false, gap: sys.contactGap };
             flown.push(cur);
           }
           // Deviation of the ball's x from the straight line to where it was aimed.
@@ -100,7 +100,7 @@ const MAX_KMH = Math.round((22 + 1.5) * 3.6); // top speed incl. jitter
         ballNo: sys.ballNo,
         bestStreak: sys.bestStreak,
         saved: Number(localStorage.getItem('cricket-catch-best-' + balls)) || 0,
-        balls: flown.map((b) => ({ kmh: b.kmh, maxDev: +b.maxDev.toFixed(2), ring: b.ring })),
+        balls: flown.map((b) => ({ kmh: b.kmh, maxDev: +b.maxDev.toFixed(2), ring: b.ring, gap: +b.gap.toFixed(3) })),
       });
     };
 
@@ -174,6 +174,7 @@ const MAX_KMH = Math.round((22 + 1.5) * 3.6); // top speed incl. jitter
     'speed stays at or under the cap': speeds.every((v) => v <= MAX_KMH),
     'ball swings in the air': bends,
     'swing grows from first to last balls': mean(log.slice(-k).map((r) => r.maxDev)) > mean(log.slice(0, k).map((r) => r.maxDev)),
+    'coach tosses the ball and the bat meets it (gap under 5 cm)': log.length === BALLS && log.every((r) => r.gap < 0.05),
     'aim ring shows during every ball': log.length === BALLS && log.every((r) => r.ring),
     'streak counts consecutive catches': A.bestStreak === BALLS && B.bestStreak === 0,
     'best score is saved': A.saved === BALLS,

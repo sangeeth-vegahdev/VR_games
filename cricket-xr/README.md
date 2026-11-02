@@ -1,10 +1,10 @@
 # Cricket Catch (Meta Immersive Web SDK, WebXR, hand tracking)
 
-A coach swings a bat, the ball flies at you (it swings in the air and gets faster every ball) and you
-catch it with your bare hands. 50 balls per round, score and misses, then touch the green ball to
-play again. Built on the Meta Immersive Web SDK (IWSDK, Three.js based). A village-green cricket ground
-with a bat-swinging coach, using free CC0 models and sounds (see `ASSETS.md`); the pitch, bat, ball, HUD
-and effects are generated in code.
+A coach tosses a ball up and hits it to you with his bat; the ball swings in the air and gets faster every
+ball, and you catch it with your bare hands. 50 balls per round, score and misses, then touch the green ball
+to play again. Built on the Meta Immersive Web SDK (IWSDK, Three.js based). A village-green cricket ground
+with a realistic, life-size coach (a CC0 human model), free CC0 scenery and sounds (see `ASSETS.md`); the
+pitch, bat, ball, cap, HUD and effects are generated in code.
 
 ## Run it
 
@@ -30,7 +30,9 @@ inside a cyan ring that shows its catch reach) and touch the green ball to start
 
 ## How it plays
 
-- The ball leaves the bat at the moment of contact and is aimed at chest height wherever your head is.
+- The coach holds the ball in his left hand, tosses it up and strikes it with the bat. The toss is aimed so
+  the ball meets the bat's sweet spot at the moment of contact, and it leaves from there, aimed at chest
+  height wherever your head is. He raises his bat when you catch it and shrugs when you miss.
 - **Speed** and **swing** both climb over the first 25 balls (43 km/h up to 79 km/h; a sideways force
   curves the ball in the air, solved so it bends INTO the catching area). After that they hold at the
   maximum, with a little speed variety so later balls are not identical.
@@ -53,8 +55,10 @@ inside a cyan ring that shows its catch reach) and touch the green ball to start
 |---|---|
 | `src/config.js` | All tuning: balls per round, difficulty ramp, speeds, swing, catch radius, delays |
 | `src/game.js` | `GameSystem`: round state machine, ball flight, catch detection, scoring, restart |
-| `src/stadium.js` | Ground, pitch, stumps, and the scenery (fence, trees, bushes, tent, rocks) |
-| `src/coach.js` | The animated coach, with a procedural bat in hand |
+| `src/stadium.js` | Sun and shadows; grass and pitch textures drawn in code (mowing stripes, creases to the Laws' measurements, wear); stumps, boundary rope, sightscreen, and the scenery (fence, trees, bushes, tent, rocks) |
+| `src/coach.js` | The coach: idle clip plus key-posed swing, toss, bat-raise and shrug, solved with two-bone IK so the bat sits in his fist and meets the ball |
+| `src/bat.js` | The cricket bat, built in code: willow blade with a rounded spine, sloped shoulders, label, ridged grip |
+| `tools/coach/` | Scripts that rebuild `public/models/coach.glb` from the CC0 source packs (see its README) |
 | `src/desktop-hand.js` | Mouse-controlled hand for visitors without a headset |
 | `src/hands.js` | Solid hand models for hand tracking, loaded from the game's own files |
 | `src/ball.js` | The cricket ball: leather and seam texture drawn in code, glow that fades as it nears |
@@ -76,8 +80,8 @@ reads the palm position from the player's grip space; if catches feel off on a r
 With `npm run dev:runtime` running:
 
 ```bash
-node tests/headless-game.cjs               # 8-ball rounds, about 10 seconds
-BALLS=50 node tests/headless-game.cjs      # full 50-ball rounds, about 10 seconds
+node tests/headless-game.cjs               # 8-ball rounds, about 35 seconds
+BALLS=50 node tests/headless-game.cjs      # full 50-ball rounds, under a minute
 # if Playwright's own Chromium is not installed:
 CHROME_PATH=/path/to/chrome node tests/headless-game.cjs
 ```
@@ -85,7 +89,8 @@ CHROME_PATH=/path/to/chrome node tests/headless-game.cjs
 It starts an emulated XR session, then plays one round with every ball caught, restarts by touching the
 green ball, and plays a round with every ball missed. It checks that speed ramps up and stays under the cap,
 that the ball swings, that the swing grows, that both tracked hands are drawn with the game's own hand models,
-that a mouse player can finish a round, and that the page logs no errors (13 checks).
+that the coach's toss meets the bat (under 5 cm at contact) on every ball, that a mouse player can finish a
+round, and that the page logs no errors (14 checks).
 
 The rounds are stepped at a fixed 60 Hz inside the page, and the palm is placed on the ball's grip space
 directly. The software renderer in a container runs at a few frames per second, so real-time play would take
