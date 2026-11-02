@@ -1,0 +1,637 @@
+<!doctype html>
+<html lang="en">
+<head>
+<title>Cricket Catch Browser Test</title>
+<style>
+/* Layout: full-screen 3D-look canvas with HUD and overlay cards pinned on top. */
+:root {
+  --ink: #f4f7fb;
+  --muted: #b9c9dc;
+  --panel: rgba(8, 20, 36, 0.8);
+  --accent: #ffb347;
+  --accent-ink: #1a1206;
+  --good: #5ef08a;
+  --bad: #ff7a6b;
+  color-scheme: dark;
+}
+html, body { height: 100%; margin: 0; }
+[hidden] { display: none !important; }
+body {
+  background: #0b1a2b;
+  color: var(--ink);
+  font: 500 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  overflow: hidden;
+}
+canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+
+#hud {
+  position: fixed;
+  top: max(14px, env(safe-area-inset-top, 0px));
+  left: max(16px, env(safe-area-inset-left, 0px));
+  right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  align-items: flex-start;
+  pointer-events: none;
+}
+.stat { background: var(--panel); border-radius: 12px; padding: 8px 14px; min-width: 96px; }
+.stat.right { text-align: right; margin-left: auto; }
+.stat span { display: block; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
+.stat b { display: block; font-size: 26px; font-variant-numeric: tabular-nums; }
+
+#msg {
+  position: fixed;
+  left: 50%;
+  top: 36%;
+  transform: translate(-50%, -50%) scale(0.9);
+  font-size: clamp(40px, 11vw, 96px);
+  font-weight: 900;
+  white-space: nowrap;
+  text-shadow: 0 4px 0 rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s, transform 0.15s;
+}
+#msg.show { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+
+.card {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(4, 10, 20, 0.6);
+  padding: max(16px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) max(16px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+}
+.card-box {
+  background: var(--panel);
+  border-radius: 18px;
+  padding: 28px 26px;
+  width: min(420px, 100%);
+  text-align: center;
+  box-sizing: border-box;
+}
+.card h1 { margin: 0 0 8px; font-size: clamp(28px, 7vw, 40px); }
+.card p { color: var(--muted); margin: 8px 0 20px; text-wrap: balance; }
+.big { font-size: 56px; font-weight: 800; margin: 4px 0 2px; font-variant-numeric: tabular-nums; }
+.rating { color: var(--accent); font-weight: 700; font-size: 18px; margin: 0 0 18px; }
+button {
+  font: 700 17px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--accent);
+  color: var(--accent-ink);
+  border: 0;
+  border-radius: 12px;
+  padding: 14px 28px;
+  min-width: 200px;
+  cursor: pointer;
+}
+button:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
+@media (prefers-reduced-motion: reduce) { #msg { transition: none; } }
+</style>
+</head>
+<body>
+<canvas id="game" aria-label="Cricket catch. Move the mouse or finger to place your catch zone."></canvas>
+
+<div id="hud" aria-live="polite">
+  <div class="stat"><span>Score</span><b id="score">0</b></div>
+  <div class="stat"><span>Missed</span><b id="missed">0</b></div>
+  <div class="stat right"><span id="ball">Ball 0 / 6</span><b id="speed">&mdash; km/h</b></div>
+</div>
+
+<div id="msg" aria-live="assertive"></div>
+
+<div id="start" class="card">
+  <div class="card-box">
+    <h1>Cricket Catch</h1>
+    <p>The coach bats. You catch. Move your mouse or finger to place the catch zone, then catch the ball as it reaches you. 6 balls per round, and the balls get faster and swing more.</p>
+    <button id="startBtn" type="button">Start</button>
+  </div>
+</div>
+
+<div id="over" class="card" hidden>
+  <div class="card-box">
+    <h1>Round over</h1>
+    <div class="big" id="finalScore">0 / 6</div>
+    <p class="rating" id="rating"></p>
+    <button id="againBtn" type="button">Play again</button>
+  </div>
+</div>
+
+<script>
+(() => {
+  const CFG = {
+    balls: 6,
+    startSpeed: 12,       // m/s for ball 1
+    speedStep: 1.5,       // m/s added per ball
+    maxSpeed: 22,         // m/s cap
+    swingBase: 0.6,       // sideways acceleration in m/s^2 for ball 1
+    swingStep: 0.08,      // added per ball
+    catchRadius: 0.4,     // m, how forgiving the catch zone is
+    readyDelay: 1.0,
+    feedbackDelay: 1.2,
+    maxLife: 4,           // s, safety net for a ball that never resolves
+  };
+
+  const CAM_H = 1.6;                       // eye height in metres
+  const RELEASE = { x: 0, y: 1.4, z: 16.5 };
+  const TARGET = { x: 0, y: 1.2, z: 0.5 }; // chest height in front of the player
+  const CATCH_Z = 1.0;                     // catch plane, 1 m in front of the player
+  const COACH_Z = 18;
+  const SWING_T = 0.35, RETURN_T = 0.5;    // bat swing and return, seconds
+  const READY_A = 70 * Math.PI / 180;
+  const FOLLOW_A = -50 * Math.PI / 180;
+
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const $ = (id) => document.getElementById(id);
+  const scoreEl = $('score'), missedEl = $('missed'), ballEl = $('ball'), speedEl = $('speed');
+  const msgEl = $('msg'), startEl = $('start'), overEl = $('over');
+
+  let W = 0, H = 0, F = 1;                 // screen size and focal length in px per metre at 1 m
+  const pointer = { x: 0, y: 0, moved: false };
+  let state = 'intro';
+  let score = 0, misses = 0, ballNo = 0, timer = 0, msgTimer = 0, overAt = 0, lastKmh = 0;
+  let ball = null;
+  let particles = [];
+  let coach = { t: null };                 // swing clock; null means idle
+
+  // Deterministic crowd so every page load looks the same.
+  let seed = 7;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const CROWD_COLORS = ['#e4572e', '#f3a712', '#2e86ab', '#f6f1d5', '#8ac926', '#ffffff', '#6a4c93'];
+  const CROWD = Array.from({ length: 1200 }, () => ({
+    u: rnd(), v: rnd(), c: CROWD_COLORS[Math.floor(rnd() * CROWD_COLORS.length)],
+  }));
+
+  function resize() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    canvas.width = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    F = Math.min(W, H) * 0.95;
+    if (!pointer.moved) {
+      pointer.x = W / 2;
+      pointer.y = H / 2 + (CAM_H - TARGET.y) * F; // where the chest-height target sits on the catch plane
+    }
+  }
+
+  function setPointer(e) {
+    const r = canvas.getBoundingClientRect();
+    pointer.x = e.clientX - r.left;
+    pointer.y = e.clientY - r.top;
+    pointer.moved = true;
+  }
+  canvas.addEventListener('pointermove', setPointer);
+  canvas.addEventListener('pointerdown', setPointer);
+  window.addEventListener('resize', resize);
+
+  // World -> screen (camera at the player's eyes, looking down +z).
+  function project(x, y, z) {
+    const s = F / z;
+    return { x: W / 2 + x * s, y: H / 2 - (y - CAM_H) * s, s };
+  }
+
+  // Screen point -> world point on the catch plane.
+  function catchPlanePoint(px, py) {
+    return { x: (px - W / 2) / F, y: CAM_H - (py - H / 2) / F };
+  }
+
+  // ---------- audio: generated tones, no files ----------
+  let audio = null;
+  function unlockAudio() {
+    try {
+      audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+      if (audio.state === 'suspended') audio.resume();
+    } catch (e) {
+      audio = null;
+    }
+  }
+  function tone(f0, f1, dur, type) {
+    if (!audio) return;
+    try {
+      const t = audio.currentTime;
+      const osc = audio.createOscillator();
+      const gain = audio.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(f0, t);
+      osc.frequency.exponentialRampToValueAtTime(f1, t + dur);
+      gain.gain.setValueAtTime(0.2, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
+      osc.connect(gain).connect(audio.destination);
+      osc.start(t);
+      osc.stop(t + dur);
+    } catch (e) { /* sound is optional */ }
+  }
+
+  // ---------- game flow ----------
+  function restart() {
+    ballNo = 0; score = 0; misses = 0;
+    ball = null; coach.t = null; particles = [];
+    lastKmh = 0;
+    overEl.hidden = true;
+    state = 'ready';
+    timer = CFG.readyDelay;
+    updateHud();
+    message('Get ready', 'var(--ink)', CFG.readyDelay);
+  }
+
+  function throwBall() {
+    ballNo++;
+    const n = ballNo - 1;
+    const speed = Math.min(CFG.startSpeed + CFG.speedStep * n, CFG.maxSpeed);
+    const side = Math.random() < 0.5 ? -1 : 1;
+
+    const tx = TARGET.x + (Math.random() * 2 - 1) * 0.5;
+    const ty = TARGET.y + (Math.random() * 2 - 1) * 0.2;
+    const dx = tx - RELEASE.x, dy = ty - RELEASE.y, dz = TARGET.z - RELEASE.z;
+    const len = Math.hypot(dx, dy, dz);
+    const vx = dx / len * speed, vy = dy / len * speed, vz = dz / len * speed;
+
+    ball = {
+      x: RELEASE.x, y: RELEASE.y, z: RELEASE.z,
+      vx, vy, vz,
+      side,
+      swingA: CFG.swingBase + CFG.swingStep * n,
+      life: 0,
+      trail: [],
+      frozen: false,
+    };
+
+    // Start the swing so the bat reaches the ball's arrival time at mid-swing.
+    const flight = (RELEASE.z - CATCH_Z) / Math.abs(vz);
+    coach.t = SWING_T / 2 - flight;
+
+    lastKmh = Math.round(speed * 3.6);
+    state = 'throwing';
+    msgEl.classList.remove('show');
+    updateHud();
+  }
+
+  function stepBall(dt) {
+    const b = ball;
+    b.trail.push({ x: b.x, y: b.y, z: b.z });
+    if (b.trail.length > 10) b.trail.shift();
+
+    const px = b.x, py = b.y, pz = b.z;
+    b.vx += b.side * b.swingA * dt;          // the swing: sideways force in the air
+    b.x += b.vx * dt;
+    b.y += b.vy * dt;
+    b.z += b.vz * dt;
+    b.life += dt;
+
+    // Test the catch at the moment the ball crosses the catch plane.
+    if (pz > CATCH_Z && b.z <= CATCH_Z) {
+      const k = (pz - CATCH_Z) / (pz - b.z);
+      const bx = px + (b.x - px) * k;
+      const by = py + (b.y - py) * k;
+      const aim = catchPlanePoint(pointer.x, pointer.y);
+      if (Math.hypot(bx - aim.x, by - aim.y) <= CFG.catchRadius) {
+        caught(bx, by);
+        return;
+      }
+    }
+
+    if (b.z <= 0 || b.life > CFG.maxLife) missed();
+  }
+
+  function caught(x, y) {
+    state = 'feedback';
+    timer = CFG.feedbackDelay;
+    ball.x = x; ball.y = y; ball.z = CATCH_Z;
+    ball.vx = ball.vy = ball.vz = 0;
+    ball.frozen = true;
+    score++;
+    burst(project(x, y, CATCH_Z));
+    tone(660, 990, 0.22, 'triangle');
+    message('CAUGHT!', 'var(--good)', CFG.feedbackDelay);
+    updateHud();
+  }
+
+  function missed() {
+    state = 'feedback';
+    timer = CFG.feedbackDelay;
+    ball.vx = ball.vy = ball.vz = 0;
+    ball.frozen = true;
+    misses++;
+    tone(220, 110, 0.35, 'sawtooth');
+    message('MISSED', 'var(--bad)', CFG.feedbackDelay);
+    updateHud();
+  }
+
+  function afterFeedback() {
+    if (ballNo >= CFG.balls) {
+      showOver();
+      return;
+    }
+    state = 'ready';
+    timer = CFG.readyDelay;
+    message('Get ready', 'var(--ink)', CFG.readyDelay);
+  }
+
+  function showOver() {
+    state = 'over';
+    overAt = performance.now();
+    const ratio = score / CFG.balls;
+    $('finalScore').textContent = score + ' / ' + CFG.balls;
+    $('rating').textContent = ratio >= 0.8 ? 'Safe hands!' : ratio >= 0.5 ? 'Good catching' : 'Keep practising';
+    overEl.hidden = false;
+  }
+
+  function updateHud() {
+    scoreEl.textContent = String(score);
+    missedEl.textContent = String(misses);
+    ballEl.textContent = 'Ball ' + ballNo + ' / ' + CFG.balls;
+    speedEl.textContent = lastKmh ? lastKmh + ' km/h' : '— km/h';
+  }
+
+  function message(text, color, duration) {
+    msgEl.textContent = text;
+    msgEl.style.color = color;
+    msgEl.classList.add('show');
+    msgTimer = duration;
+  }
+
+  // ---------- swing and particles ----------
+  function lerp(a, b, t) { return a + (b - a) * t; }
+  function smooth(t) { return t * t * (3 - 2 * t); }
+
+  function batAngle() {
+    if (coach.t === null || coach.t < 0) return READY_A;
+    if (coach.t < SWING_T) return lerp(READY_A, FOLLOW_A, smooth(coach.t / SWING_T));
+    return lerp(FOLLOW_A, READY_A, smooth(Math.min(1, (coach.t - SWING_T) / RETURN_T)));
+  }
+
+  function burst(p) {
+    for (let i = 0; i < 40; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = 90 + Math.random() * 260;
+      particles.push({
+        x: p.x, y: p.y,
+        vx: Math.cos(a) * sp,
+        vy: Math.sin(a) * sp - 120,
+        life: 0,
+        max: 0.6 + Math.random() * 0.35,
+        color: Math.random() < 0.5 ? '#5ef08a' : '#ffd166',
+      });
+    }
+  }
+
+  function updateParticles(dt) {
+    for (const q of particles) {
+      q.life += dt;
+      q.vy += 420 * dt;
+      q.x += q.vx * dt;
+      q.y += q.vy * dt;
+    }
+    particles = particles.filter((q) => q.life < q.max);
+  }
+
+  function update(dt) {
+    if (coach.t !== null) {
+      coach.t += dt;
+      if (coach.t > SWING_T + RETURN_T) coach.t = null;
+    }
+
+    if (state === 'ready') {
+      timer -= dt;
+      if (timer <= 0) throwBall();
+    } else if (state === 'throwing') {
+      stepBall(dt);
+    } else if (state === 'feedback') {
+      timer -= dt;
+      if (timer <= 0) afterFeedback();
+    }
+
+    updateParticles(dt);
+    if (msgTimer > 0) {
+      msgTimer -= dt;
+      if (msgTimer <= 0 && state !== 'ready') msgEl.classList.remove('show');
+    }
+  }
+
+  // ---------- drawing ----------
+  function box(x0, x1, y0, y1, z, fill) {
+    const a = project(x0, y0, z), b = project(x1, y1, z);
+    ctx.fillStyle = fill;
+    ctx.fillRect(a.x, b.y, b.x - a.x, a.y - b.y);
+  }
+
+  function line3(p, q, color, width) {
+    const a = project(p[0], p[1], p[2]), b = project(q[0], q[1], q[2]);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+  }
+
+  function lineWidthAt(z) { return Math.max(2, 0.12 * F / z); }
+
+  function drawSky() {
+    const g = ctx.createLinearGradient(0, 0, 0, H / 2);
+    g.addColorStop(0, '#4f9be0');
+    g.addColorStop(1, '#d6eefc');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H / 2 + 1);
+  }
+
+  function drawGround() {
+    const g = ctx.createLinearGradient(0, H / 2, 0, H);
+    g.addColorStop(0, '#2c6e33');
+    g.addColorStop(1, '#3f9446');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, H / 2, W, H / 2);
+
+    // Mowing stripes, running from the player's feet to the horizon.
+    for (let i = -10; i < 10; i++) {
+      const x0 = i * 2.5, x1 = x0 + 2.5;
+      const a = project(x0, 0, 1), b = project(x1, 0, 1);
+      const c = project(x1, 0, 90), d = project(x0, 0, 90);
+      ctx.fillStyle = i % 2 === 0 ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.06)';
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.lineTo(c.x, c.y); ctx.lineTo(d.x, d.y);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    // Pitch strip and creases.
+    const p0 = project(-1.5, 0, 1), p1 = project(1.5, 0, 1);
+    const p2 = project(1.5, 0, COACH_Z + 1), p3 = project(-1.5, 0, COACH_Z + 1);
+    ctx.fillStyle = '#d7b779';
+    ctx.beginPath();
+    ctx.moveTo(p0.x, p0.y); ctx.lineTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.lineTo(p3.x, p3.y);
+    ctx.closePath();
+    ctx.fill();
+    line3([-1.5, 0.004, 17], [1.5, 0.004, 17], 'rgba(255,255,255,0.9)', 2);
+    line3([-1.5, 0.004, 1], [1.5, 0.004, 1], 'rgba(255,255,255,0.9)', 2);
+  }
+
+  function drawStand(z, y0, y1) {
+    const top = project(0, y1, z).y;
+    const bottom = project(0, y0, z).y;
+    ctx.fillStyle = '#263a52';
+    ctx.fillRect(0, top, W, bottom - top);
+    const h = bottom - top;
+    const r = Math.max(1.2, h * 0.07);
+    for (const d of CROWD) {
+      ctx.fillStyle = d.c;
+      ctx.beginPath();
+      ctx.arc(d.u * W, top + d.v * h, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  function drawStumps() {
+    const z = 19.3;
+    for (const x of [-0.1, 0, 0.1]) box(x - 0.02, x + 0.02, 0, 0.71, z, '#f1e3b8');
+    box(-0.1, 0.1, 0.71, 0.74, z, '#f1e3b8');
+  }
+
+  function drawCoach() {
+    const shirt = '#1f5fd1', pants = '#f2f2f2', skin = '#c48a64', wood = '#e8c27a', handle = '#3b2a1e';
+    const z = COACH_Z;
+
+    box(-0.2, -0.03, 0, 0.9, z, pants);
+    box(0.03, 0.2, 0, 0.9, z, pants);
+    box(-0.27, 0.27, 0.9, 1.55, z, shirt);
+
+    line3([-0.24, 1.45, z], [-0.3, 1.0, z], shirt, lineWidthAt(z));
+
+    const head = project(0, 1.72, z);
+    ctx.fillStyle = skin;
+    ctx.beginPath();
+    ctx.arc(head.x, head.y, 0.13 * head.s, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = shirt;
+    ctx.beginPath();
+    ctx.arc(head.x, head.y, 0.14 * head.s, Math.PI, 0);
+    ctx.closePath();
+    ctx.fill();
+
+    // Bat: pivot at hand height, angle driven by the swing clock.
+    const pivot = [0.3, 1.05, 17.8];
+    line3([0.24, 1.45, z], pivot, shirt, lineWidthAt(z));
+
+    const a = batAngle();
+    let dir = [Math.sin(a), -0.25, -Math.cos(a)];
+    const len = Math.hypot(dir[0], dir[1], dir[2]);
+    dir = dir.map((v) => v / len);
+    const grip = pivot.map((v, i) => v + dir[i] * 0.22);
+    const tip = pivot.map((v, i) => v + dir[i] * 0.95);
+    line3(pivot, grip, handle, lineWidthAt(pivot[2]));
+    line3(grip, tip, wood, lineWidthAt(pivot[2]) * 2.4);
+  }
+
+  function drawBall() {
+    if (!ball) return;
+
+    if (!ball.frozen) {
+      for (let i = 0; i < ball.trail.length; i++) {
+        const t = ball.trail[i];
+        if (t.z <= 0.05) continue;
+        const p = project(t.x, t.y, t.z);
+        ctx.globalAlpha = (i + 1) / ball.trail.length * 0.35;
+        ctx.fillStyle = '#ffd7a8';
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, Math.max(2, 0.07 * p.s), 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    if (ball.z <= 0.05) return;
+    const p = project(ball.x, ball.y, ball.z);
+    const r = Math.max(3, 0.08 * p.s);
+    const g = ctx.createRadialGradient(p.x - r * 0.35, p.y - r * 0.35, r * 0.1, p.x, p.y, r);
+    g.addColorStop(0, '#ff8c7a');
+    g.addColorStop(1, '#9e1f17');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function drawReticle() {
+    if (state === 'over' || state === 'intro') return;
+    const r = CFG.catchRadius * F;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(94, 240, 138, 0.9)';
+    ctx.fillStyle = 'rgba(94, 240, 138, 0.12)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(pointer.x, pointer.y, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.setLineDash([10, 8]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(94, 240, 138, 0.95)';
+    ctx.beginPath();
+    ctx.arc(pointer.x, pointer.y, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawParticles() {
+    for (const q of particles) {
+      ctx.globalAlpha = Math.max(0, 1 - q.life / q.max);
+      ctx.fillStyle = q.color;
+      ctx.beginPath();
+      ctx.arc(q.x, q.y, 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    drawSky();
+    drawGround();
+    drawStand(72, 4, 10);   // back tier
+    drawStand(60, 0, 4.5);  // front tier
+    drawStumps();
+    drawCoach();
+    drawBall();
+    drawReticle();
+    drawParticles();
+  }
+
+  // ---------- wiring ----------
+  $('startBtn').addEventListener('click', () => {
+    unlockAudio();
+    startEl.hidden = true;
+    restart();
+  });
+  $('againBtn').addEventListener('click', () => {
+    unlockAudio();
+    restart();
+  });
+  window.addEventListener('keydown', (e) => {
+    if (e.code !== 'Space' && e.code !== 'Enter') return;
+    if (state === 'intro' && !startEl.hidden) {
+      unlockAudio();
+      startEl.hidden = true;
+      restart();
+    } else if (state === 'over' && performance.now() - overAt > 800) {
+      restart();
+    }
+  });
+
+  let last = performance.now();
+  function loop(now) {
+    const dt = Math.min((now - last) / 1000, 0.05);
+    last = now;
+    update(dt);
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  resize();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
