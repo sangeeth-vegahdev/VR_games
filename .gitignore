@@ -26,3 +26,15 @@ MemoryCaptures/
 # OS
 .DS_Store
 Thumbs.db
+
+# Test artifacts and debug dumps
+audit-artifacts/
+**/audit-artifacts/
+hd-preview-frames/
+**/hd-preview-frames/
+test_*.png
+**/test_*.png
+
+# Draft and duplicate media
+cricket_catch_demo.mp4
+cricket-xr/*.mp4

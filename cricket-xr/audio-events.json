@@ -1,0 +1,58 @@
+{
+  "fps": 24,
+  "events": [
+    {
+      "type": "ui",
+      "frame": 60
+    },
+    {
+      "type": "hit",
+      "frame": 102
+    },
+    {
+      "type": "caught",
+      "frame": 134
+    },
+    {
+      "type": "hit",
+      "frame": 198
+    },
+    {
+      "type": "caught",
+      "frame": 229
+    },
+    {
+      "type": "hit",
+      "frame": 293
+    },
+    {
+      "type": "missed",
+      "frame": 325
+    },
+    {
+      "type": "hit",
+      "frame": 389
+    },
+    {
+      "type": "caught",
+      "frame": 418
+    },
+    {
+      "type": "hit",
+      "frame": 482
+    },
+    {
+      "type": "caught",
+      "frame": 510
+    },
+    {
+      "type": "hit",
+      "frame": 574
+    },
+    {
+      "type": "caught",
+      "frame": 601
+    }
+  ],
+  "totalFrames": 710
+}
