@@ -66,8 +66,8 @@ fs.mkdirSync(OUT, { recursive: true });
   // A short look at the title card first, hands in place.
   await page.evaluate(async () => {
     const d = window.IWER_DEVICE;
-    await d.remote.dispatch('set_transform', { device: 'hand-left', position: { x: -0.28, y: 0.95, z: -0.42 }, orientation: { fingers: [0, 1, -0.3], palm: [0, 0, -1] }, anchor: 'grip' });
-    await d.remote.dispatch('set_transform', { device: 'hand-right', position: { x: 0.3, y: 0.8, z: -0.3 }, orientation: { fingers: [0, -0.2, -1], palm: [-1, 0, 0] }, anchor: 'grip' });
+    await d.remote.dispatch('set_transform', { device: 'hand-left', position: { x: -0.36, y: 0.72, z: -0.34 }, orientation: { fingers: [0, 1, -0.3], palm: [0, 0, -1] }, anchor: 'grip' });
+    await d.remote.dispatch('set_transform', { device: 'hand-right', position: { x: 0.3, y: 0.72, z: -0.28 }, orientation: { fingers: [0, -0.2, -1], palm: [-1, 0, 0] }, anchor: 'grip' });
   });
   for (let i = 0; i < 12; i++) {
     await page.evaluate(({ DT }) => window.__upd(DT), { DT });
@@ -82,14 +82,17 @@ fs.mkdirSync(OUT, { recursive: true });
         s.pitchNo = SKIP_TO;
         s.hud.set({ pitchNo: SKIP_TO });
       }
-      if (!window.__H) window.__H = { glove: new V(-0.28, 0.95, -0.42), bare: new V(0.3, 0.8, -0.3), look: new V(0, 1.3, -18) };
+      // The mitt rests low and to the side (so the pitcher stays in view), and goes to the ball late,
+      // the way a catcher receives a pitch.
+      const rest = new V(-0.36, 0.72, -0.34);
+      if (!window.__H) window.__H = { glove: rest.clone(), bare: new V(0.3, 0.72, -0.28), look: new V(0, 1.3, -18) };
       const H = window.__H;
-      const rest = new V(-0.25, 0.95, -0.42);
       const n = s.pitchNo - SKIP_TO;
       const letGo = n === 4; // let the 4th one through
       for (let i = 0; i < SIM; i++) {
-        const target = s.state === 'flying' || s.state === 'windup' ? (letGo ? rest : s.aim) : s.state === 'feedback' && s.held ? H.glove : rest;
-        H.glove.lerp(target, s.state === 'flying' ? 0.12 : 0.06);
+        const late = s.state === 'flying' && s.ball.position.z > -7;
+        const target = late && !letGo ? s.aim : s.state === 'feedback' && s.held ? H.glove : rest;
+        H.glove.lerp(target, late ? 0.16 : 0.05);
         const lookTarget = s.state === 'flying' || s.state === 'feedback' ? s.ball.position : s.state === 'windup' ? s.pitcher.ballPos : new V(0, 1.4, -18);
         H.look.lerp(lookTarget, s.state === 'flying' ? 0.5 : 0.15);
         window.__upd(DT);
