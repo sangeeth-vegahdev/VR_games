@@ -124,13 +124,13 @@ export class Sound {
   }
 }
 
-const BURST_COUNT = 36;
-const BURST_LIFE = 0.7;
+const BURST_COUNT = 32;
+const BURST_LIFE = 0.45;
 const TRAIL_COUNT = 9;
 
 export class Effects {
   constructor(world) {
-    const geo = new SphereGeometry(0.025, 8, 6);
+    const geo = new SphereGeometry(0.012, 8, 6);
     this.bits = [];
     for (let i = 0; i < BURST_COUNT; i++) {
       const mesh = new Mesh(geo, new MeshBasicMaterial({ color: 0xffd23f, transparent: true }));
@@ -154,7 +154,9 @@ export class Effects {
   burst(position) {
     for (const bit of this.bits) {
       bit.mesh.position.copy(position);
-      bit.vel.set(Math.random() * 2 - 1, Math.random() * 1.5 + 0.3, Math.random() * 2 - 1).multiplyScalar(1.6);
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 0.5 + Math.random() * 0.7;
+      bit.vel.set(Math.cos(angle) * speed, Math.sin(angle) * speed + 0.35, (Math.random() - 0.75) * 0.3);
       bit.life = BURST_LIFE;
       bit.mesh.visible = true;
       bit.mesh.scale.setScalar(1);

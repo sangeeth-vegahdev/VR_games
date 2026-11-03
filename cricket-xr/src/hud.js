@@ -36,13 +36,17 @@ class Panel {
     ctx.stroke();
   }
 
-  text(value, x, y, size, color = '#ffffff', weight = 700, align = 'center') {
+  text(value, x, y, size, color = '#ffffff', weight = 700, align = 'center', maxWidth = null) {
     const { ctx } = this;
     ctx.font = `${weight} ${size}px system-ui, sans-serif`;
     ctx.fillStyle = color;
     ctx.textAlign = align;
     ctx.textBaseline = 'middle';
-    ctx.fillText(value, x, y);
+    if (maxWidth) {
+      ctx.fillText(value, x, y, maxWidth);
+    } else {
+      ctx.fillText(value, x, y);
+    }
   }
 
   commit() {
@@ -67,8 +71,14 @@ export class Hud {
   }
 
   set(partial) {
-    Object.assign(this.model, partial);
-    this.drawBoard();
+    let changed = false;
+    for (const k in partial) {
+      if (this.model[k] !== partial[k]) {
+        this.model[k] = partial[k];
+        changed = true;
+      }
+    }
+    if (changed) this.drawBoard();
   }
 
   drawBoard() {
@@ -76,17 +86,20 @@ export class Hud {
     const p = this.board;
     p.card();
     const w = p.canvas.width;
-    p.text(`Score ${m.score}`, w * 0.25, 120, 96, GOOD);
-    p.text(`Missed ${m.misses}`, w * 0.75, 120, 96, m.misses ? BAD : DIM);
+    const colMax = w * 0.40;
+    p.text(`Score ${m.score}`, w * 0.28, 110, 72, GOOD, 700, 'center', colMax);
+    p.text(`Missed ${m.misses}`, w * 0.72, 110, 72, m.misses ? BAD : DIM, 700, 'center', colMax);
     p.text(
       m.ballNo ? `Ball ${m.ballNo} / ${this.balls}   |   ${m.kmh} km/h` : `${this.balls} balls per round`,
       w / 2,
-      240,
-      52,
+      205,
+      46,
       DIM,
       600,
+      'center',
+      w * 0.85,
     );
-    p.text(m.message, w / 2, 330, 76, m.color);
+    p.text(m.message, w / 2, 295, 70, m.color, 700, 'center', w * 0.85);
     p.commit();
   }
 
@@ -94,9 +107,9 @@ export class Hud {
     const p = this.card;
     p.card();
     const w = p.canvas.width;
-    p.text(title, w / 2, 100, 84, '#ffffff');
-    lines.forEach((line, i) => p.text(line.text, w / 2, 190 + i * 72, 48, line.color || DIM, 600));
-    p.text(hint, w / 2, p.canvas.height - 50, 38, DIM, 600);
+    p.text(title, w / 2, 100, 84, '#ffffff', 700, 'center', w * 0.9);
+    lines.forEach((line, i) => p.text(line.text, w / 2, 190 + i * 72, 48, line.color || DIM, 600, 'center', w * 0.85));
+    p.text(hint, w / 2, p.canvas.height - 50, 38, DIM, 600, 'center', w * 0.9);
     p.commit();
     p.mesh.visible = true;
     this.board.mesh.visible = false; // the card already shows the result

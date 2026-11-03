@@ -182,20 +182,36 @@ export class GameSystem extends createSystem({}) {
 
   beginThrow() {
     this.ballNo++;
+    const roll = Math.random();
+    this.isHighCatch = this.ballNo > 3 && roll < 0.20;
+    this.isLowCatch = this.ballNo > 2 && !this.isHighCatch && roll < 0.42;
+
     const ramp = Math.min(1, (this.ballNo - 1) / CFG.rampBalls);
     let speed = lerp(CFG.startSpeed, CFG.maxSpeed, ramp);
     if (ramp >= 1) speed += (Math.random() * 2 - 1) * CFG.speedJitter;
     this.throwSpeed = speed;
     this.kmh = Math.round(speed * 3.6);
-    this.side = Math.random() < 0.5 ? -1 : 1;
-    this.swingA = lerp(CFG.swingBase, CFG.swingMax, ramp);
+    const isStraight = this.isHighCatch ? (Math.random() < 0.6) : (Math.random() < 0.35);
+    if (isStraight) {
+      this.side = 0;
+      this.swingA = 0;
+    } else {
+      this.side = Math.random() < 0.5 ? -1 : 1;
+      this.swingA = lerp(CFG.swingBase, CFG.swingMax, ramp);
+    }
 
-    // Arrival point: around chest height, wherever the headset currently is.
-    // In a headset use the real head; on a PC the camera stands in for it.
+    // Arrival point: high skier, dipping low catch near knee/shin, or chest/waist
     (this.world.session ? this.player.head : this.world.camera).getWorldPosition(this.head);
+    let targetY;
+    if (this.isLowCatch) {
+      targetY = 0.62 + (Math.random() * 2 - 1) * 0.08;
+    } else {
+      targetY = this.head.y - CFG.chestBelowHead + (Math.random() * 2 - 1) * CFG.targetSpreadY;
+    }
+
     this.aim.set(
       (Math.random() * 2 - 1) * CFG.targetSpreadX,
-      this.head.y - CFG.chestBelowHead + (Math.random() * 2 - 1) * CFG.targetSpreadY,
+      targetY,
       CFG.arriveZ,
     );
 
@@ -218,7 +234,7 @@ export class GameSystem extends createSystem({}) {
     this.coach.releaseBall();
     const dz = this.aim.z - from.z;
     const len = Math.hypot(this.aim.x - from.x, this.aim.y - from.y, dz);
-    const flight = len / this.throwSpeed;
+    const flight = this.isHighCatch ? 2.1 : (len / this.throwSpeed);
     this.vel.set(
       (this.aim.x - from.x) / flight - 0.5 * this.side * this.swingA * flight,
       (this.aim.y - from.y) / flight + 0.5 * CFG.gravity * flight,
@@ -246,7 +262,15 @@ export class GameSystem extends createSystem({}) {
     this.sound.caught();
     this.coach.cheer();
     this.hud.set({ score: this.score });
-    this.message(this.streak >= 3 ? `CAUGHT!  ${this.streak} in a row` : 'CAUGHT!', COLORS.good, CFG.feedbackDelay);
+    let catchMsg = 'CAUGHT!';
+    if (this.isHighCatch) {
+      catchMsg = 'HIGH CATCH!';
+    } else if (this.isLowCatch) {
+      catchMsg = 'LOW CATCH!';
+    } else if (this.streak >= 3) {
+      catchMsg = `CAUGHT!  ${this.streak} in a row`;
+    }
+    this.message(catchMsg, COLORS.good, CFG.feedbackDelay);
   }
 
   missed() {
@@ -419,7 +443,13 @@ export class GameSystem extends createSystem({}) {
   }
 
   updateFeedback(dt) {
-    if (this.heldBy) this.ball.position.copy(this.palm[this.heldBy]);
+    if (this.heldBy) {
+      this.ball.scale.setScalar(0.55);
+      this.ball.position.copy(this.palm[this.heldBy]);
+      this.ball.position.z -= 0.035;
+      this.ball.position.y += 0.02;
+      this.ball.position.x += (this.heldBy === "left" ? 0.02 : -0.02);
+    }
     this.timer -= dt;
     if (this.timer <= 0) this.afterFeedback();
   }

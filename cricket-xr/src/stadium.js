@@ -45,7 +45,7 @@ function buildLights(world) {
   sun.position.set(-10, 24, 4);
   sun.target.position.set(0, 0, -9);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.mapSize.set(1024, 1024);
   const cam = sun.shadow.camera;
   cam.left = -7;
   cam.right = 7;
