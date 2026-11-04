@@ -116,12 +116,13 @@ export class Sound {
     return { src, gain, filter };
   }
 
-  // The ball smacking into the mitt's pocket: a short leather pop with a low thump under it.
-  pop() {
+  // The ball smacking into the mitt: a short leather pop with a low thump under it. Right in the
+  // pocket it is the full, deep pop; in the web or off the heel it is lighter and higher.
+  pop(weight = 1) {
     if (!this.ctx) return;
     try {
-      this.noiseShot('lowpass', 1800, 0.7, 0.9, 0.002, 0.09);
-      this.tone(160, 70, 0.12, 'sine', 0.5);
+      this.noiseShot('lowpass', 1500 + 900 * (1 - weight), 0.7, 0.5 + 0.45 * weight, 0.002, 0.07 + 0.04 * weight);
+      this.tone(120 + 70 * (1 - weight), 60, 0.12, 'sine', 0.2 + 0.35 * weight);
     } catch (e) {
       /* sound is optional */
     }
@@ -167,8 +168,8 @@ export class Sound {
     }
   }
 
-  caught(streak = 1) {
-    this.pop();
+  caught(streak = 1, weight = 1) {
+    this.pop(weight);
     if (!this.file('coin', 0.35)) this.tone(880, 1320, 0.18, 'triangle', 0.08);
     this.cheer(Math.min(1.6, 0.6 + streak * 0.15));
   }
@@ -189,6 +190,8 @@ export class Sound {
 
 const BURST_COUNT = 28;
 const BURST_LIFE = 0.45;
+const DUST_COUNT = 14;
+const DUST_LIFE = 0.75;
 const TRAIL_COUNT = 9;
 
 export class Effects {
@@ -212,6 +215,34 @@ export class Effects {
     }
     this.trailHead = 0;
     this.trailTimer = 0;
+
+    // A puff of dust knocked off the leather when the ball smacks into the mitt: soft, growing,
+    // fading clouds drifting back out of the pocket.
+    const puffGeo = new SphereGeometry(0.03, 10, 8);
+    this.puffs = [];
+    for (let i = 0; i < DUST_COUNT; i++) {
+      const mesh = new Mesh(puffGeo, new MeshBasicMaterial({ color: 0xc9a77c, transparent: true, depthWrite: false }));
+      mesh.visible = false;
+      world.createTransformEntity(mesh);
+      this.puffs.push({ mesh, vel: new Vector3(), life: 0, size: 1 });
+    }
+  }
+
+  // position: where the ball hit. out: the way out of the pocket (unit). strength 0..1.
+  dust(position, out, strength = 1) {
+    for (const p of this.puffs) {
+      p.mesh.position.copy(position);
+      const a = Math.random() * Math.PI * 2;
+      const r = 0.25 + Math.random() * 0.45;
+      p.vel.set(Math.cos(a) * r, Math.sin(a) * r * 0.7 + 0.15, Math.cos(a * 1.7) * r * 0.5).addScaledVector(out, 0.35 + Math.random() * 0.4);
+      p.vel.multiplyScalar(0.6 + 0.6 * strength);
+      p.life = DUST_LIFE * (0.7 + Math.random() * 0.5);
+      p.size = 0.6 + Math.random() * 0.8;
+      p.mesh.visible = true;
+      p.mesh.scale.setScalar(p.size * 0.4);
+      p.mesh.material.opacity = 0.32 * strength;
+      p.strength = strength;
+    }
   }
 
   burst(position) {
@@ -247,6 +278,20 @@ export class Effects {
   }
 
   update(dt) {
+    for (const p of this.puffs) {
+      if (!p.mesh.visible) continue;
+      p.life -= dt;
+      if (p.life <= 0) {
+        p.mesh.visible = false;
+        continue;
+      }
+      p.vel.multiplyScalar(Math.max(0, 1 - 3.5 * dt)); // air drag: a puff slows quickly
+      p.vel.y += 0.08 * dt; // and drifts up a little
+      p.mesh.position.addScaledVector(p.vel, dt);
+      const k = p.life / DUST_LIFE;
+      p.mesh.scale.setScalar(p.size * (0.4 + (1 - k) * 1.4));
+      p.mesh.material.opacity = 0.32 * p.strength * k;
+    }
     for (const bit of this.bits) {
       if (!bit.mesh.visible) continue;
       bit.life -= dt;

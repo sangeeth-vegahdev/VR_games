@@ -34,6 +34,11 @@ export class PlayerGlove {
     // the hand's real position).
     this.kick = new Vector3();
     this.kickVel = new Vector3();
+    this.tilt = 0; // ...and is tipped back (radians about its own x axis), then springs back
+    this.tiltVel = 0;
+    this.baseQuat = new Quaternion();
+    this.tiltQuat = new Quaternion();
+    this.xAxis = new Vector3(1, 0, 0);
 
     this.v = Array.from({ length: 8 }, () => new Vector3());
     this.m = new Matrix4();
@@ -48,6 +53,7 @@ export class PlayerGlove {
   // The ball smacks into the pocket travelling along `dir` (unit) at `speed` m/s.
   impact(dir, speed) {
     this.kickVel.addScaledVector(dir, Math.min(1.6, 0.35 + speed * 0.045));
+    this.tiltVel -= Math.min(2.2, 0.5 + speed * 0.06); // fingers tip back towards the catcher
   }
 
   update(player, desktop, inHeadset, dt = 1 / 60) {
@@ -72,7 +78,11 @@ export class PlayerGlove {
     const c = 2 * Math.sqrt(k) * 0.6;
     this.kickVel.addScaledVector(this.kick, -k * dt).multiplyScalar(Math.max(0, 1 - c * dt));
     this.kick.addScaledVector(this.kickVel, dt);
+    this.tiltVel += -k * this.tilt * dt;
+    this.tiltVel *= Math.max(0, 1 - c * dt);
+    this.tilt += this.tiltVel * dt;
     this.object.position.copy(this.pocket).add(this.kick);
+    this.object.quaternion.copy(this.baseQuat).multiply(this.tiltQuat.setFromAxisAngle(this.xAxis, this.tilt));
     this.object.visible = this.ok;
   }
 
@@ -123,6 +133,7 @@ export class PlayerGlove {
     const x = this.v[5].crossVectors(y, z);
     this.m.makeBasis(x, y, z);
     this.object.quaternion.setFromRotationMatrix(this.m);
+    this.baseQuat.copy(this.object.quaternion);
     // Mirror the mitt so its thumb sits on the hand's thumb side.
     const flip = exact ? thumb : this.side === 'left' ? -1 : 1;
     this.object.scale.set(flip, 1, 1);

@@ -108,6 +108,7 @@ const MAX_MPH = Math.round((28 + 1.2) * 2.23694) + 1;
     // how: 'catch' (mitt to the ball), 'miss' (hands away), 'bare' (the bare hand to the ball)
     // look: 'ball' (head follows the ball) or 'away' (head turned to the sky)
     const playRound = (how, look) => {
+      seed = 12345; // every round gets the same pitch sequence, whatever else used random numbers
       const flown = [];
       let cur = null;
       park();
@@ -137,6 +138,18 @@ const MAX_MPH = Math.round((28 + 1.2) * 2.23694) + 1;
               cur.maxDrop = 0;
               cur.maxSide = 0;
             }
+            // The ball's own spin between two frames: its axis should be the pitch's spin axis.
+            const q = sys.ball.quaternion;
+            if (cur.lastQ) {
+              const dq = q.clone().multiply(cur.lastQ.clone().invert());
+              const sn = Math.sqrt(Math.max(0, 1 - dq.w * dq.w));
+              if (sn > 1e-4) {
+                const ax = new V(dq.x / sn, dq.y / sn, dq.z / sn).multiplyScalar(Math.sign(dq.w) || 1);
+                const want = new V(...sys.pitchType.spin.axis).normalize();
+                cur.spinDot = Math.min(cur.spinDot === undefined ? 1 : cur.spinDot, ax.dot(want));
+              }
+            }
+            cur.lastQ = q.clone();
             // Deviation from the straight line release -> aim.
             if (cur.lastP) cur.aimMiss = Math.min(cur.aimMiss === undefined ? Infinity : cur.aimMiss, segDist(sys.aim, cur.lastP, p));
             cur.lastP = p.clone();
@@ -170,6 +183,7 @@ const MAX_MPH = Math.round((28 + 1.2) * 2.23694) + 1;
           inHand: +b.inHand.toFixed(3), releaseY: b.release ? +b.release[1].toFixed(2) : null, releaseZ: b.release ? +b.release[2].toFixed(2) : null,
           drop: b.maxDrop !== undefined ? +b.maxDrop.toFixed(2) : null, side: b.maxSide !== undefined ? +b.maxSide.toFixed(2) : null,
           aimMiss: b.aimMiss === undefined ? null : +b.aimMiss.toFixed(4),
+          spinDot: b.spinDot === undefined ? null : +b.spinDot.toFixed(3),
         })),
       });
     };
@@ -190,7 +204,8 @@ const MAX_MPH = Math.round((28 + 1.2) * 2.23694) + 1;
 
     // Swap the mitt to the other hand by touching the gold orb, then catch with it.
     const before = sys.glove.side;
-    step(() => sys.state !== 'over', () => {});
+    park(); // hands away from the green start ball, so the round stays over
+    step(() => sys.state === 'over', () => park());
     for (let i = 0; i < 120 && sys.glove.side === before; i++) {
       sys.swapLockout = 0;
       placeGrip(before === 'left' ? 'right' : 'left', sys.swapOrb.position);
@@ -230,6 +245,13 @@ const MAX_MPH = Math.round((28 + 1.2) * 2.23694) + 1;
             cur.nearest = sys.nearest;
             cur.msg = sys.hud.model.message;
             cur.ballDir = sys.vel.clone().normalize();
+            cur.spot = sys.spot;
+            if (sys.held) {
+              const m = sys.glove.object;
+              m.updateMatrixWorld(true);
+              cur.hitLocal = m.worldToLocal(sys.ball.position.clone()).toArray();
+              cur.restLocal = sys.restLocal.toArray();
+            }
           }
           if (sys.held && sys.settle > 0) {
             cur.held.push(sys.ball.position.distanceTo(sys.restAt));
@@ -260,9 +282,43 @@ const MAX_MPH = Math.round((28 + 1.2) * 2.23694) + 1;
       // The mitt flicks 40 cm across the pitch's line every frame (20 cm either side, out of reach).
       sweep: scenario((side, f) => placeGrip(side, new V(sys.aim.x + (f % 2 ? 0.2 : -0.2), sys.aim.y, sys.aim.z))),
       back: scenario(beside(0), new V(0, 0, 1)), // pocket turned to the catcher: the pitch hits the back
+      pocket: scenario(beside(0)), // dead centre
+      // Into the web: the upper thumb side of the mitt. The offset is worked out in the mitt's own
+      // space, so it is right whichever hand it is on.
+      web: scenario((side) => {
+        const m = sys.glove.object;
+        m.updateMatrixWorld(true);
+        const o = m.localToWorld(new V(0, 0, 0));
+        const w = m.localToWorld(new V(0.06, 0.075, 0)).sub(o);
+        placeGrip(side, new V(sys.aim.x - w.x, sys.aim.y - w.y, sys.aim.z));
+      }),
+    };
+    // The mitt itself: real size, and closing folds the thumb side in over the pocket.
+    const mitt = sys.glove.mitt;
+    const box = (k) => {
+      mitt.setClose(k);
+      const g = mitt.object.children[0].geometry;
+      g.computeBoundingBox();
+      return g.boundingBox.clone();
+    };
+    const open = box(0);
+    const shut = box(1);
+    const posAt = (k) => {
+      mitt.setClose(k);
+      const a = mitt.object.children[0].geometry.attributes.position;
+      let best = -Infinity, z = 0; // the thumb-side extreme
+      for (let i = 0; i < a.count; i++) if (a.getX(i) > best) { best = a.getX(i); z = a.getZ(i); }
+      return { x: best, z };
+    };
+    const thumbOpen = posAt(0), thumbShut = posAt(1);
+    mitt.setClose(0);
+    const mittShape = {
+      width: open.max.x - open.min.x, height: open.max.y - open.min.y, depth: open.max.z - open.min.z,
+      shutWidth: shut.max.x - shut.min.x, thumbIn: thumbOpen.x - thumbShut.x, thumbForward: thumbShut.z - thumbOpen.z,
+      verts: mitt.object.children[0].geometry.attributes.position.count,
     };
 
-    return { rounds, restarted, before, after, contact };
+    return { rounds, restarted, before, after, contact, mittShape };
   }, { pitches: PITCHES });
 
   // Desktop visitors (no headset): the mouse moves the mitt. Play a whole round with it.
@@ -300,7 +356,9 @@ const MAX_MPH = Math.round((28 + 1.2) * 2.23694) + 1;
 
   const [A, B, C, D] = run.rounds;
   const K = run.contact;
-  for (const [k, v] of Object.entries(K)) console.log('contact', k, JSON.stringify(v.map((b) => [b.result, +(b.nearest * 100).toFixed(1), b.msg, +(b.held[0] || 0).toFixed(3), +(b.maxStep || 0).toFixed(3), +(Math.max(0, ...b.kick) * 100).toFixed(1), +((b.kick[b.kick.length - 1] || 0) * 1000).toFixed(1), +(b.closed[12] || 0).toFixed(2)])));
+  const M = run.mittShape;
+  console.log('mitt', JSON.stringify(Object.fromEntries(Object.entries(M).map(([k, v]) => [k, +v.toFixed(3)]))));
+  for (const [k, v] of Object.entries(K)) console.log('contact', k, JSON.stringify(v.map((b) => [b.result, +(b.nearest * 100).toFixed(1), b.msg, +(b.held[0] || 0).toFixed(3), +(b.maxStep || 0).toFixed(3), +(Math.max(0, ...b.kick) * 100).toFixed(1), +((b.kick[b.kick.length - 1] || 0) * 1000).toFixed(1), +(b.closed[12] || 0).toFixed(2), b.spot])));
   console.log('hands', JSON.stringify(hands));
   console.log('desktop', JSON.stringify(mouse));
   for (const r of run.rounds) {
@@ -343,12 +401,18 @@ const MAX_MPH = Math.round((28 + 1.2) * 2.23694) + 1;
     'gold orb swaps the mitt to the other hand': run.before !== run.after,
     'D: catching with the swapped hand works': D.catches === PITCHES,
     'contact: a pitch 27 cm from the pocket is missed, and the miss says by how much': K.near.length === 8 && K.near.every((b) => b.result === 'missed' && /Just missed: \d+ cm/.test(b.msg) && b.nearest > 0.05 && b.nearest < 0.2),
-    'contact: a pitch into the edge of the pocket (13 cm off centre) is caught': K.edge.length === 8 && K.edge.every((b) => b.result === 'caught'),
+    'contact: a pitch into the edge of the mitt (13 cm off centre) is caught': K.edge.length === 8 && K.edge.every((b) => b.result === 'caught'),
     'contact: a mitt flicking across the pitch\'s line catches it (swept with the mitt)': K.sweep.length === 8 && K.sweep.every((b) => b.result === 'caught'),
     'contact: a pitch into the back of the mitt glances off': K.back.length === 8 && K.back.every((b) => b.result === 'back' && /back of the mitt/.test(b.msg)),
     'catch: the ball settles into the pocket from the point of contact (no snap)': K.edge.every((b) => b.held[0] > 0.03 && b.maxStep < 0.07 && b.held[b.held.length - 1] < 0.005),
     'catch: the mitt is knocked back by the ball, then springs back': K.edge.every((b) => Math.max(...b.kick) > 0.015 && b.kick[b.kick.length - 1] < 0.004),
     'catch: the mitt snaps shut round the ball': K.edge.every((b) => b.closed[12] > 0.8),
+    'catch: a pitch dead centre is called right in the pocket, and rests there': K.pocket.length === 8 && K.pocket.every((b) => b.result === 'caught' && b.spot === 'pocket' && /pocket|POP/.test(b.msg) && Math.hypot(b.restLocal[0], b.restLocal[1]) < 0.03),
+    'catch: a pitch into the upper thumb side is called in the web, and rests in the web': K.web.length === 8 && K.web.every((b) => b.result === 'caught' && b.spot === 'web' && b.restLocal[0] > 0.02 && b.restLocal[1] > 0.02),
+    'catch: an edge catch rests on the side it hit, inside the pocket': K.edge.filter((b) => b.result === 'caught').every((b) => Math.sign(b.restLocal[0]) === Math.sign(b.hitLocal[0]) && Math.hypot(b.restLocal[0], b.restLocal[1]) <= 0.0701),
+    'pitches: each pitch spins about its own axis (backspin, topspin, side spin)': log.every((p) => p.spinDot !== null && p.spinDot > 0.999),
+    'mitt: real catcher\'s mitt size (28-32 cm wide, 30-36 cm tall, 11-16 cm deep)': M.width > 0.28 && M.width < 0.32 && M.height > 0.3 && M.height < 0.36 && M.depth > 0.11 && M.depth < 0.16,
+    'mitt: closing folds the thumb side in and forward over the pocket': M.thumbIn > 0.03 && M.thumbForward > 0.04 && M.shutWidth < M.width - 0.03,
     'tracked hands drawn with the game\'s own models': !!hands.drawn,
     'mitt replaces the hand it is on; the other hand shows': hands.gloveHandHidden && hands.otherHandShown && hands.mittShown,
     'mitt sits on the tracked hand (within 12 cm of its grip)': hands.mittToGrip < 0.12,

@@ -7,12 +7,14 @@ import {
   MeshBasicMaterial,
   MeshStandardMaterial,
   PlaneGeometry,
+  Quaternion,
   SphereGeometry,
   SRGBColorSpace,
   Vector3,
   VisibilityState,
 } from '@iwsdk/core';
 import { BALL_RADIUS, makeBall, setFocusGlow, setGlowForDistance } from './ball.js';
+import { catchSpot } from './glove.js';
 import { buildBallpark } from './ballpark.js';
 import { CFG, DEFAULT_GLOVE, PITCHES, START_POS, START_RADIUS, SWAP_POS, SWAP_RADIUS } from './config.js';
 import { DesktopPointer } from './desktop-pointer.js';
@@ -149,6 +151,10 @@ export class GameSystem extends createSystem({}) {
     this.closest = new Vector3();
     this.settleFrom = new Vector3();
     this.restAt = new Vector3();
+    this.restLocal = new Vector3(); // where the caught ball rests, in the mitt's own space
+    this.spinAxis = new Vector3(1, 0, 0);
+    this.spinQ = new Quaternion();
+    this.spot = null; // pocket | web | heel | edge
     this.settle = 0;
     this.nearest = Infinity; // closest the ball came to touching the mitt, beyond contact (m)
 
@@ -209,6 +215,7 @@ export class GameSystem extends createSystem({}) {
       get gloveSide() { return this.sys.glove.side; },
       get pocket() { return this.sys.glove.pocket; },
       get nearest() { return this.sys.nearest; },
+      get spot() { return this.sys.spot; },
       get focusMode() { return this.sys.focus.mode; },
       get lastFocus() { return this.sys.lastFocus; },
       get lastResult() { return this.sys.lastResult; },
@@ -321,6 +328,8 @@ export class GameSystem extends createSystem({}) {
     this.launchVel.copy(this.vel);
     this.ball.position.copy(from);
     this.ball.rotation.set(Math.random() * 6, Math.random() * 6, 0);
+    const sp = this.pitchType.spin;
+    this.spinAxis.set(sp.axis[0], sp.axis[1], sp.axis[2]).normalize();
     this.life = 0;
     this.zone.position.copy(this.aim);
     this.nearest = Infinity;
@@ -338,21 +347,29 @@ export class GameSystem extends createSystem({}) {
     this.held = true;
     this.settle = 0;
     this.settleFrom.copy(this.ball.position);
+    // Where in the mitt did it land? The ball rests there (in the web, in the pocket...).
+    const m = this.glove.object;
+    m.updateMatrixWorld(true);
+    const local = m.worldToLocal(this.tmp.copy(this.ball.position));
+    this.spot = catchSpot(local.x, local.y);
+    this.glove.mitt.restPoint(local.x, local.y, BALL_RADIUS, this.restLocal);
     const speed = this.vel.length();
     if (speed > 0) this.glove.impact(this.tmp.copy(this.vel).divideScalar(speed), speed);
+    this.fx.dust(this.ball.position, this.glove.normal, this.spot === 'pocket' ? 1 : 0.6);
     this.catches++;
     this.streak++;
     this.bestStreak = Math.max(this.bestStreak, this.streak);
     this.zone.visible = false;
     this.fx.burst(this.ball.position); // at the point of contact
-    this.sound.caught(this.streak);
+    this.sound.caught(this.streak, this.spot === 'pocket' ? 1 : this.spot === 'web' ? 0.55 : 0.7);
     this.reaction = 'cheer';
     this.lastResult = 'caught';
     this.endFocus();
     this.hud.set({ catches: this.catches });
-    let msg = 'CAUGHT!';
-    if (this.streak >= 3) msg = `CAUGHT!  ${this.streak} in a row`;
-    else if (this.pitchType.name !== 'Fastball') msg = `${this.pitchType.name} caught!`;
+    const where = { pocket: 'Right in the pocket', web: 'In the web', heel: 'Off the heel', edge: 'On the edge' }[this.spot];
+    let msg = this.spot === 'pocket' ? 'POP!  Right in the pocket' : `CAUGHT!  ${where}`;
+    if (this.streak >= 3) msg = `${this.spot === 'pocket' ? 'POP!' : 'CAUGHT!'}  ${this.streak} in a row`;
+    else if (this.pitchType.name !== 'Fastball' && this.spot === 'pocket') msg = `${this.pitchType.name}: right in the pocket`;
     this.message(msg, COLORS.good, CFG.feedbackDelay);
   }
 
@@ -536,7 +553,8 @@ export class GameSystem extends createSystem({}) {
     const t = this.life + dt;
     this.ball.position.copy(this.launchFrom).addScaledVector(this.launchVel, t).addScaledVector(this.accel, 0.5 * t * t);
     this.vel.copy(this.launchVel).addScaledVector(this.accel, t);
-    this.ball.rotation.x += 30 * dt; // spinning seams
+    // The seams spin about the pitch's own axis (backspin, topspin, side spin).
+    this.ball.quaternion.premultiply(this.spinQ.setFromAxisAngle(this.spinAxis, this.pitchType.spin.rps * Math.PI * 2 * dt));
     // Real size in his hand, growing to the game's catchable size as it leaves.
     this.ball.scale.setScalar(Math.min(1, this.pitcher.ballScale + this.life * 1.5));
     const dist = this.ball.position.distanceTo(this.head.set(0, this.aim.y, 0));
@@ -597,7 +615,8 @@ export class GameSystem extends createSystem({}) {
     if (this.held) {
       // In the pocket, a little sunk into the leather, moving with the mitt (and its recoil). It
       // eases there from the point of contact.
-      this.restAt.copy(this.glove.object.position).addScaledVector(this.glove.normal, -0.012);
+      this.glove.object.updateMatrixWorld(true);
+      this.restAt.copy(this.restLocal).applyMatrix4(this.glove.object.matrixWorld);
       this.settle = Math.min(1, this.settle + dt / CFG.settleTime);
       const k = this.settle * this.settle * (3 - 2 * this.settle);
       this.ball.scale.setScalar(1);

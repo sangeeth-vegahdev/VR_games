@@ -57,6 +57,20 @@ test('the strike-zone hint is shown only for the first pitches', () => {
   assert.ok(CFG.zoneHintPitches > 0 && CFG.zoneHintPitches < CFG.pitches);
 });
 
+test('each pitch spins the way that makes it move (Magnus: spin x velocity)', () => {
+  const v = new Vector3(0, 0, 1); // the pitch flies towards the catcher
+  for (const p of PITCHES) {
+    const f = new Vector3(...p.spin.axis).normalize().cross(v); // direction of the Magnus force
+    assert.ok(p.spin.rps > 0, `${p.name} spins`);
+    // Sideways, the spin pushes the way the pitch breaks.
+    if (Math.abs(p.break[0]) > 0.5) assert.equal(Math.sign(f.x), Math.sign(p.break[0]), `${p.name} sideways`);
+  }
+  const by = (n) => PITCHES.find((p) => p.name === n);
+  const lift = (n) => new Vector3(...by(n).spin.axis).normalize().cross(v).y;
+  assert.ok(lift('Fastball') > 0.9, 'fastball backspin lifts');
+  assert.ok(lift('Curveball') < -0.9, 'curveball topspin dives');
+});
+
 // ---------- the flight maths (the same solve the game uses) ----------
 
 test('a solved pitch arrives exactly at its aim point, for every pitch type', () => {
