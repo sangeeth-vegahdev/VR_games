@@ -85,6 +85,12 @@ the grip pose); if catches feel too strict or too generous on a real headset, ad
 
 ## Test
 
+Quick checks that need no browser, no headset and no dev server (a few seconds):
+
+```bash
+npm run test:unit        # node --test: tuning, the flight maths and the catch logic
+```
+
 With `npm run dev:runtime` running:
 
 ```bash

@@ -93,6 +93,12 @@ and G to swap the mitt to the other hand. Eye focus is not measured on a PC.
 
 ## Test
 
+Quick checks that need no browser, no headset and no dev server (a few seconds):
+
+```bash
+npm run test:unit        # node --test: tuning, the flight maths and the catch logic
+```
+
 With `npm run dev:runtime` running:
 
 ```bash
