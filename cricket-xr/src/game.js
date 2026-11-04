@@ -17,6 +17,8 @@ import { Effects, Sound } from './fx.js';
 import { trackedHands, useSkinHands } from './hands.js';
 import { COLORS, Hud } from './hud.js';
 import { buildStadium } from './stadium.js';
+import { FocusTracker } from './gaze.js';
+import { EyeRingTracker } from './eye-tracker.js';
 
 const lerp = (a, b, t) => a + (b - a) * t;
 
@@ -45,6 +47,8 @@ export class GameSystem extends createSystem({}) {
     buildStadium(this.world);
     this.coach = new Coach(this.world);
     this.hud = new Hud(this.world, CFG.balls);
+    this.focus = new FocusTracker();
+    this.eyeTracker = new EyeRingTracker(this.world);
 
     this.ball = makeBall();
     this.ball.visible = false;
@@ -132,6 +136,9 @@ export class GameSystem extends createSystem({}) {
     this.throwSpeed = 0;
     this.streak = 0;
     this.bestStreak = 0;
+    this.focusSum = 0;
+    this.focusCount = 0;
+    this.lastFocus = null;
     this.best = loadBest();
     this.paused = false;
 
@@ -169,6 +176,11 @@ export class GameSystem extends createSystem({}) {
       get streak() { return this.sys.streak; },
       get best() { return this.sys.best; },
       get skinHands() { return this.sys.skinHands; },
+      get focusMode() { return this.sys.focus.mode; },
+      get eyeTracker() { return this.sys.eyeTracker; },
+      get eyeTrackerPos() { return this.sys.eyeTracker.group.position; },
+      get eyeTrackerVisible() { return this.sys.eyeTracker.visible; },
+      get lastFocus() { return this.sys.lastFocus; },
       get contactGap() { return this.sys.contactGap; },
       get nearest() { return this.sys.nearest; },
       get lastResult() { return this.sys.lastResult; },
@@ -204,14 +216,18 @@ export class GameSystem extends createSystem({}) {
     this.kmh = 0;
     this.streak = 0;
     this.bestStreak = 0;
+    this.focusSum = 0;
+    this.focusCount = 0;
+    this.lastFocus = null;
     this.heldBy = null;
     this.heldOutline.visible = false;
     this.ball.visible = false;
     this.aimRing.visible = false;
+    this.eyeTracker.hide();
     this.marker.visible = false;
     this.fx.clearTrail();
     this.hud.hideCard();
-    this.hud.set({ score: 0, misses: 0, ballNo: 0, kmh: 0 });
+    this.hud.set({ score: 0, misses: 0, ballNo: 0, kmh: 0, focus: null });
     this.sound.start();
     this.state = 'ready';
     this.timer = CFG.readyDelay;
@@ -254,6 +270,8 @@ export class GameSystem extends createSystem({}) {
     );
 
     this.coach.swing();
+    this.focus.resetPitch();
+    this.eyeTracker.show();
     // The coach holds the ball, tosses it up and strikes it: the ball is shown from the start.
     this.ball.scale.setScalar(this.coach.ballScale);
     this.ball.position.copy(this.coach.ballPos);
@@ -310,11 +328,18 @@ export class GameSystem extends createSystem({}) {
     this.score++;
     this.streak++;
     this.bestStreak = Math.max(this.bestStreak, this.streak);
+    const f = this.focus.focus;
+    this.lastFocus = f;
+    if (f !== null) {
+      this.focusSum += f;
+      this.focusCount++;
+    }
     this.aimRing.visible = false;
+    this.eyeTracker.hide();
     this.fx.burst(this.ball.position); // at the point of contact
     this.sound.caught();
     this.coach.cheer();
-    this.hud.set({ score: this.score });
+    this.hud.set({ score: this.score, focus: f });
     let catchMsg = 'CAUGHT!';
     if (this.isHighCatch) {
       catchMsg = 'HIGH CATCH!';
@@ -337,12 +362,20 @@ export class GameSystem extends createSystem({}) {
     this.ball.visible = why === 'back'; // a deflected ball is seen flying off
     this.misses++;
     this.streak = 0;
+    const f = this.focus.focus;
+    this.lastFocus = f;
+    if (f !== null) {
+      this.focusSum += f;
+      this.focusCount++;
+    }
     this.aimRing.visible = false;
+    this.eyeTracker.hide();
     this.sound.missed();
     this.coach.shrug();
-    this.hud.set({ misses: this.misses });
+    this.hud.set({ misses: this.misses, focus: f });
     let msg = 'MISSED';
     if (why === 'back') msg = 'Off the back of the hand';
+    else if (this.lastFocus !== null && this.focus.lostAt !== null) msg = `Eyes left it at ${Math.max(1, Math.round(this.focus.lostAt))} m`;
     else if (this.nearest < CFG.nearMiss) msg = `Just missed: ${Math.max(1, Math.round(this.nearest * 100))} cm`;
     this.message(msg, COLORS.bad, CFG.feedbackDelay);
   }
@@ -373,13 +406,19 @@ export class GameSystem extends createSystem({}) {
       saveBest(this.best);
     }
     this.hud.set({ message: '' });
+    const lines = [
+      { text: `Final score  ${this.score} / ${CFG.balls}`, color: COLORS.good },
+      { text: record ? `${rating}  New best!` : rating, color: COLORS.ink },
+    ];
+    if (this.focusCount) {
+      const pct = Math.round((this.focusSum / this.focusCount) * 100);
+      const how = this.focus.mode === 'eyes' ? 'eye tracking' : 'head direction';
+      lines.push({ text: `Eyes on the ball  ${pct}%  (${how})` });
+    }
+    lines.push({ text: `Best streak ${this.bestStreak}   |   Best ${this.best}` });
     this.hud.showCard(
       'Round over',
-      [
-        { text: `Final score  ${this.score} / ${CFG.balls}`, color: COLORS.good },
-        { text: record ? `${rating}  New best!` : rating, color: COLORS.ink },
-        { text: `Best streak ${this.bestStreak}   |   Best ${this.best}` },
-      ],
+      lines,
       'Touch the green ball to play again',
     );
     this.sound.over();
@@ -439,6 +478,21 @@ export class GameSystem extends createSystem({}) {
     this.paused = this.world.visibilityState.peek() === VisibilityState.VisibleBlurred;
     if (this.paused) return;
     this.readPalms();
+    const inHeadset = !!this.world.session;
+    this.focus.sample(this.player, this.world.camera, inHeadset);
+    if (this.state === 'swinging' || this.state === 'flying') {
+      this.eyeTracker.update(
+        this.focus,
+        this.ball.position,
+        this.focus.watching,
+        inHeadset,
+        this.world.camera,
+        this.desktop,
+        dt,
+      );
+    } else {
+      this.eyeTracker.hide();
+    }
     this.fx.update(dt);
     if (this.lockout > 0) this.lockout -= dt;
 
@@ -504,6 +558,7 @@ export class GameSystem extends createSystem({}) {
     // Real size in the coach's hand, growing to the game's catchable size as it leaves the bat.
     this.ball.scale.setScalar(Math.min(1, this.coach.ballScale + this.life * 2.5));
     setGlowForDistance(this.ball, CFG.arriveZ - this.ball.position.z);
+    this.focus.track(this.ball.position, dt, CFG.arriveZ - this.ball.position.z);
     this.life += dt;
     this.fx.trailPoint(this.ball.position, dt);
 

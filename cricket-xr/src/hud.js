@@ -39,6 +39,10 @@ class Panel {
   text(value, x, y, size, color = '#ffffff', weight = 700, align = 'center', maxWidth = null) {
     const { ctx } = this;
     ctx.font = `${weight} ${size}px system-ui, sans-serif`;
+    if (maxWidth) {
+      const w = ctx.measureText(value).width;
+      if (w > maxWidth) ctx.font = `${weight} ${Math.round(size * Math.max(0.6, maxWidth / w))}px system-ui, sans-serif`;
+    }
     ctx.fillStyle = color;
     ctx.textAlign = align;
     ctx.textBaseline = 'middle';
@@ -62,11 +66,11 @@ export class Hud {
   constructor(world, balls) {
     this.balls = balls;
     // Scoreboard above the ball's flight path, in front of the player.
-    this.board = new Panel(world, 2.4, 1.0, 400, [0, 2.6, -3.4]); // above the sightscreen, so it never hides the ball
+    this.board = new Panel(world, 2.4, 1.1, 400, [0, 2.65, -3.4]); // above the sightscreen, so it never hides the ball
     // Round-over / title card, closer and lower.
-    this.card = new Panel(world, 2.0, 1.2, 400, [0, 1.8, -1.6]);
+    this.card = new Panel(world, 2.0, 1.3, 400, [0, 1.8, -1.6]);
     this.card.mesh.visible = false;
-    this.model = { score: 0, misses: 0, ballNo: 0, kmh: 0, message: '', color: '#fff' };
+    this.model = { score: 0, misses: 0, ballNo: 0, kmh: 0, focus: null, message: '', color: '#fff' };
     this.drawBoard();
   }
 
@@ -87,19 +91,23 @@ export class Hud {
     p.card();
     const w = p.canvas.width;
     const colMax = w * 0.40;
-    p.text(`Score ${m.score}`, w * 0.28, 110, 72, GOOD, 700, 'center', colMax);
-    p.text(`Missed ${m.misses}`, w * 0.72, 110, 72, m.misses ? BAD : DIM, 700, 'center', colMax);
+    p.text(`Score ${m.score}`, w * 0.28, 100, 72, GOOD, 700, 'center', colMax);
+    p.text(`Missed ${m.misses}`, w * 0.72, 100, 72, m.misses ? BAD : DIM, 700, 'center', colMax);
     p.text(
       m.ballNo ? `Ball ${m.ballNo} / ${this.balls}   |   ${m.kmh} km/h` : `${this.balls} balls per round`,
       w / 2,
-      205,
-      46,
+      180,
+      44,
       DIM,
       600,
       'center',
       w * 0.85,
     );
-    p.text(m.message, w / 2, 295, 70, m.color, 700, 'center', w * 0.85);
+    if (m.focus !== null) {
+      const pct = Math.round(m.focus * 100);
+      p.text(`Eyes on the ball  ${pct}%`, w / 2, 248, 42, pct >= 70 ? GOOD : pct >= 40 ? '#ffd166' : BAD, 600, 'center', w * 0.85);
+    }
+    p.text(m.message, w / 2, m.focus !== null ? 335 : 295, 66, m.color, 700, 'center', w * 0.85);
     p.commit();
   }
 
@@ -107,9 +115,11 @@ export class Hud {
     const p = this.card;
     p.card();
     const w = p.canvas.width;
-    p.text(title, w / 2, 100, 84, '#ffffff', 700, 'center', w * 0.9);
-    lines.forEach((line, i) => p.text(line.text, w / 2, 190 + i * 72, 48, line.color || DIM, 600, 'center', w * 0.85));
-    p.text(hint, w / 2, p.canvas.height - 50, 38, DIM, 600, 'center', w * 0.9);
+    p.text(title, w / 2, 95, 84, '#ffffff', 700, 'center', w * 0.9);
+    const step = lines.length > 3 ? Math.min(62, 240 / (lines.length - 1)) : 70;
+    const size = lines.length > 3 ? 40 : 48;
+    lines.forEach((line, i) => p.text(line.text, w / 2, 180 + i * step, size, line.color || DIM, 600, 'center', w * 0.85));
+    p.text(hint, w / 2, p.canvas.height - 45, 38, DIM, 600, 'center', w * 0.9);
     p.commit();
     p.mesh.visible = true;
     this.board.mesh.visible = false; // the card already shows the result

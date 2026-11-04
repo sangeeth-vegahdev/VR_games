@@ -13,7 +13,8 @@
       "mode": "vr",
       "offer": "always",
       "features": {
-        "handTracking": true
+        "handTracking": true,
+        "gazeTracking": true
       }
     },
     "input": {
@@ -45,6 +46,10 @@
       "spatialUI": {
         "kit": "horizon",
         "preferredColorScheme": "dark"
+      },
+      "gaze": {
+        "logDiagnostics": false,
+        "suppressWhenDirectPointerActive": false
       }
     }
   },

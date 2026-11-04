@@ -97,8 +97,15 @@ const MAX_KMH = Math.round((22 + 1.5) * 3.6); // top speed incl. jitter
       }
     };
 
+    const lookAt = (p) => {
+      const head = sys.player.head;
+      const from = head.getWorldPosition(new V());
+      const m = new head.matrix.constructor().lookAt(from, p, new V(0, 1, 0));
+      head.quaternion.setFromRotationMatrix(m);
+    };
+
     const rounds = [];
-    const playRound = (catchAll) => {
+    const playRound = (catchAll, look = 'ball') => {
       const flown = [];
       let cur = null;
       if (!catchAll) park();
@@ -106,22 +113,31 @@ const MAX_KMH = Math.round((22 + 1.5) * 3.6); // top speed incl. jitter
       step(
         () => sys.state === 'over',
         () => {
+          const p = sys.ball.position;
+          if (look === 'ball') lookAt(sys.state === 'flying' ? p : new V(0, 1.4, -18));
+          else lookAt(new V(0, 30, 2));
+
           if (sys.state !== 'flying') {
-            cur = null;
+            if (sys.state === 'feedback' && cur && !cur.done) {
+              cur.done = true;
+              cur.focus = sys.lastFocus;
+            }
+            if (sys.state !== 'feedback') cur = null;
             return;
           }
           if (!cur) {
-            cur = { kmh: sys.kmh, maxDev: 0, x0: sys.ball.position.x, z0: sys.ball.position.z, ring: false, gap: sys.contactGap, curved: sys.side !== 0 };
+            cur = { kmh: sys.kmh, maxDev: 0, x0: sys.ball.position.x, z0: sys.ball.position.z, ring: false, eyeRing: false, gap: sys.contactGap, curved: sys.side !== 0 };
             flown.push(cur);
           }
           // Deviation of the ball's x from the straight line to where it was aimed.
-          const p = sys.ball.position, a = sys.aim;
+          const a = sys.aim;
           if (cur.lastP) cur.aimMiss = Math.min(cur.aimMiss === undefined ? Infinity : cur.aimMiss, segDist(a, cur.lastP, p));
           cur.lastP = p.clone();
           const k = (p.z - cur.z0) / (a.z - cur.z0);
           const lineX = cur.x0 + (a.x - cur.x0) * k;
           cur.maxDev = Math.max(cur.maxDev, Math.abs(p.x - lineX));
           cur.ring = cur.ring || window.__game.aimRingVisible;
+          cur.eyeRing = cur.eyeRing || window.__game.eyeTrackerVisible;
           if (catchAll) placeGrip('right', p);
         },
       );
@@ -131,20 +147,29 @@ const MAX_KMH = Math.round((22 + 1.5) * 3.6); // top speed incl. jitter
         ballNo: sys.ballNo,
         bestStreak: sys.bestStreak,
         saved: Number(localStorage.getItem('cricket-catch-best-' + balls)) || 0,
-        balls: flown.map((b) => ({ kmh: b.kmh, maxDev: +b.maxDev.toFixed(2), ring: b.ring, gap: +b.gap.toFixed(3), curved: b.curved, aimMiss: b.aimMiss === undefined ? null : +b.aimMiss.toFixed(4) })),
+        balls: flown.map((b) => ({
+          kmh: b.kmh,
+          maxDev: +b.maxDev.toFixed(2),
+          ring: b.ring,
+          eyeRing: b.eyeRing,
+          focus: b.focus === null ? null : +b.focus.toFixed(2),
+          gap: +b.gap.toFixed(3),
+          curved: b.curved,
+          aimMiss: b.aimMiss === undefined ? null : +b.aimMiss.toFixed(4),
+        })),
       });
     };
 
     // Round A: every ball is caught.
-    playRound(true);
+    playRound(true, 'ball');
 
     // Restart: touch the green ball once the lockout has passed.
-    step(() => sys.state !== 'over', () => placeGrip('right', sys.marker.position));
+    step(() => sys.state !== 'over', () => { park(); placeGrip('right', sys.marker.position); lookAt(new V(0, 30, 2)); });
     park();
     const restartedState = sys.state;
 
     // Round B: nothing is caught.
-    playRound(false);
+    playRound(false, 'away');
 
     // ---- contact: what counts as touching the hand ----
     // Each scenario plays a whole round with a hand placed relative to the ball every frame.
@@ -223,7 +248,15 @@ const MAX_KMH = Math.round((22 + 1.5) * 3.6); // top speed incl. jitter
   // Desktop visitors (no headset): the mouse is the hand. Play a whole round with it.
   const desk = await browser.newPage({ ignoreHTTPSErrors: true, viewport: { width: 900, height: 700 } });
   desk.on('pageerror', (e) => errors.push('desktop: ' + e.message));
-  await desk.goto(GAME_URL + '/?balls=6');
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      await desk.goto(GAME_URL + '/?balls=6');
+      break;
+    } catch (e) {
+      if (attempt === 4) throw e;
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+  }
   await desk.waitForFunction(() => window.__game && window.__world, null, { timeout: 30000 });
   await desk.waitForTimeout(1000);
   const mouse = await desk.evaluate(() => {
@@ -284,6 +317,9 @@ const MAX_KMH = Math.round((22 + 1.5) * 3.6); // top speed incl. jitter
     'swing grows from first to last swinging balls': curved.length < 2 || mean(curved.slice(-Math.ceil(curved.length / 2)).map((r) => r.maxDev)) > mean(curved.slice(0, Math.floor(curved.length / 2)).map((r) => r.maxDev)),
     'coach tosses the ball and the bat meets it (gap under 5 cm)': log.length === BALLS && log.every((r) => r.gap < 0.05),
     'aim ring shows during every ball': log.length === BALLS && log.every((r) => r.ring),
+    'eyes on the ball: high focus when watching': mean(A.balls.map((p) => p.focus)) > 0.85,
+    'eyes off the ball: low focus when looking away': mean(B.balls.map((p) => p.focus)) < 0.1,
+    'eye ring tracker: visible during flight': A.balls.every((b) => b.eyeRing),
     'streak counts consecutive catches': A.bestStreak === BALLS && B.bestStreak === 0,
     'best score is saved': A.saved === BALLS,
     'tracked hands drawn with the game\'s own hand models': handsDrawn,

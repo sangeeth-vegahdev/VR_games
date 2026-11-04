@@ -2,7 +2,9 @@
 // They check the game's tuning and the maths the flight and the catch rely on.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { Vector3 } from '@iwsdk/core';
+import { Object3D, Vector3 } from '@iwsdk/core';
+import { FocusTracker } from '../src/gaze.js';
+import { EyeRingTracker, projectGazePoint } from '../src/eye-tracker.js';
 import { CFG } from '../src/config.js';
 
 const BALL_RADIUS = 0.08; // src/ball.js
@@ -67,4 +69,68 @@ test('a straight delivery has no swing, and a swinging one bends sideways', () =
   };
   assert.equal(bend(0), straight.x);
   assert.ok(Math.abs(bend(CFG.swingBase)) > 0.5 * CFG.swingBase * T * T * 0.99);
+});
+
+
+test('focus cones: the eyes can be tighter than the head, which must be looser', () => {
+  assert.ok(CFG.focusConeEyes > 0 && CFG.focusConeEyes < CFG.focusConeHead);
+});
+
+
+test('focus tracker: tracks eyes inside cone and calculates focus fraction', () => {
+  const tracker = new FocusTracker();
+  assert.equal(tracker.mode, 'none');
+  assert.equal(tracker.focus, null);
+  tracker.mode = 'eyes';
+  tracker.origin.set(0, 1.6, 0);
+  tracker.dir.set(0, 0, -1);
+  // Ball aligned
+  tracker.track(new Vector3(0, 1.6, -10), 0.5, 10);
+  assert.equal(tracker.watching, true);
+  assert.equal(tracker.focus, 1.0);
+  // Look away
+  tracker.track(new Vector3(5, 1.6, -10), 0.5, 10);
+  assert.equal(tracker.watching, false);
+  assert.equal(tracker.focus, 0.5);
+});
+
+
+test('eye ring tracker: projects gaze ray at ball depth without vergence conflict', () => {
+  const origin = new Vector3(0, 1.5, 0);
+  const dir = new Vector3(0, 0, -1);
+  const ball = new Vector3(0, 1.5, -12);
+  const ptDirect = projectGazePoint(origin, dir, ball);
+  assert.ok(ptDirect.distanceTo(ball) < 1e-6, 'ring is positioned exactly at the ball');
+  const angle = (15 * Math.PI) / 180;
+  const tiltedDir = new Vector3(Math.sin(angle), 0, -Math.cos(angle)).normalize();
+  const ptTilted = projectGazePoint(origin, tiltedDir, ball);
+  assert.ok(Math.abs(origin.distanceTo(ptTilted) - 12) < 1e-6, 'ring maintains ball depth on the gaze ray');
+  assert.ok(ptTilted.x > 3, 'ring moves in direction of eye movement');
+});
+
+
+test('eye ring tracker: visual reticle locks on and scales with distance', () => {
+  const mockWorld = { createTransformEntity: () => {} };
+  const tracker = new EyeRingTracker(mockWorld);
+  tracker.show();
+  assert.equal(tracker.visible, true);
+  const mockFocus = {
+    origin: new Vector3(0, 1.3, 0),
+    dir: new Vector3(0, 0, -1),
+    watching: true,
+  };
+  const ball = new Vector3(0, 1.3, -10);
+  const camera = new Object3D();
+  camera.position.set(0, 1.3, 0);
+  // Update while locked on
+  tracker.update(mockFocus, ball, true, true, camera, null, 1 / 60);
+  assert.ok(tracker.group.position.distanceTo(ball) < 1e-6, 'reticle is placed at the ball');
+  assert.equal(tracker.ringMaterial.color.getHex(), 0x5eead4, 'ring turns cyan-teal on lock');
+  assert.ok(tracker.group.scale.x > 0.4, 'ring scales proportionally at 10m');
+  // Update when eyes look away
+  mockFocus.watching = false;
+  mockFocus.dir.set(0.5, 0, -0.866).normalize();
+  tracker.update(mockFocus, ball, false, true, camera, null, 1 / 60);
+  assert.ok(tracker.group.position.distanceTo(ball) > 4, 'reticle moves away from ball with eye direction');
+  assert.equal(tracker.ringMaterial.color.getHex(), 0xffffff, 'ring dims to white when off target');
 });

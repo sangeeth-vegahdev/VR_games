@@ -29,6 +29,9 @@ export const CFG = {
   aimHintFromZ: -9, // ...once the ball is closer than this
   maxLife: 5, // safety net for a ball that never resolves
   missZ: 0.2, // a ball past this z (behind the hands) is missed
+  // Eyes on the ball: how close (degrees) the gaze must stay to the ball to count as watching it.
+  focusConeEyes: 7, // with real eye tracking
+  focusConeHead: 12, // with head direction only (no eye tracking)
 };
 
 export const COACH_Z = -17;
