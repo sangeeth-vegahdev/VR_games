@@ -202,19 +202,30 @@ fs.mkdirSync(AUDIT_OUT, { recursive: true });
     const DT = 1 / 60;
     const rounds = [];
 
+    // The game reads each palm from the headset's hand every frame, so the test moves the hand's grip
+    // (where the headset puts it), not the game's palm position, and reads the grip pose.
+    const V = s.aim.constructor;
+    const placeGrip = (side, world) => {
+      const g = s.player.gripSpaces[side];
+      g.position.copy(g.parent.worldToLocal(new V().copy(world)));
+      g.updateMatrixWorld(true);
+    };
+    const savedJoints = s.palmFromJoints;
+    s.palmFromJoints = false;
+
     const playFullRound = (catchAll) => {
       s.lockout = 0;
       s.startRound();
       let loopCount = 0;
 
       while (s.state !== 'over' && loopCount++ < 60 * 60 * 8) {
-        if (s.state === 'flying') {
-          if (catchAll) {
-            s.palm.right.copy(s.aim);
-          } else {
-            s.palm.right.set(10, 10, 10);
-            s.palm.left.set(-10, 10, 10);
-          }
+        if (catchAll) {
+          // The right hand waits where the ball will arrive.
+          if (s.state === 'flying') placeGrip('right', s.aim);
+        } else {
+          // Both hands well away from the ball's path.
+          placeGrip('left', new V(-0.9, 0.6, 0.1));
+          placeGrip('right', new V(0.9, 0.6, 0.1));
         }
         s.update(DT);
       }
@@ -233,6 +244,7 @@ fs.mkdirSync(AUDIT_OUT, { recursive: true });
 
     // Round 2: 50 balls with misses
     playFullRound(false);
+    s.palmFromJoints = savedJoints;
 
     return rounds;
   });
