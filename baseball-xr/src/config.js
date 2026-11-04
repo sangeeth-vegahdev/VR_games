@@ -11,8 +11,13 @@ export const CFG = {
   maxSpeed: 28, // m/s once fully ramped (63 mph): quick in VR, but readable
   speedJitter: 1.2,
   gravity: 9.81, // real gravity: a baseball drops visibly over 18 m
-  catchRadius: 0.17, // ball centre to the glove's pocket: the mitt is big
-  bareHandRadius: 0.09, // a ball this close to the bare hand is a "use the glove" miss
+  // A catch is the ball's centre arriving within catchRadius of the pocket's centre: inside the mitt's
+  // face (about 28 cm across its binding), coming in from the front. Swept between frames, with the mitt.
+  catchRadius: 0.14,
+  backOfMitt: -0.3, // arriving this far behind the pocket (cosine) it glances off the back of the mitt
+  settleTime: 0.06, // seconds for a caught ball to settle into the pocket (no snapping)
+  nearMiss: 0.4, // a miss closer than this tells you by how much
+  bareHandRadius: 0.1, // ball centre to the bare palm (ball radius plus the hand): "use the mitt"
   arriveZ: -0.55, // where pitches cross the catcher's reach, in front of the body
   zoneHalfWidth: 0.3, // pitches arrive within this much left/right of centre...
   zoneHalfHeight: 0.22, // ...and up/down around the target height
@@ -46,9 +51,13 @@ export const SWAP_RADIUS = 0.12;
 // The pitches, unlocked as the round goes on. `break` is an extra steady acceleration (m/s^2):
 // x is to the catcher's right (+), y is up. A right-hander's curveball dives down and away from a
 // right-handed batter (to the catcher's left), the slider slides the same way flatter and later.
+// `spin` is the ball's spin axis (world, the ball flying towards +Z) and how fast it is drawn turning
+// (turns a second; slowed from the real 20 to 40, which would only flicker). Each axis is the one
+// whose Magnus force (spin x velocity) gives that pitch its movement: backspin lifts the fastball,
+// topspin dives the curve, side spin slides the slider, and the changeup fades.
 export const PITCHES = [
-  { name: 'Fastball', from: 1, speed: 1.0, break: [0, 3.2] }, // backspin lift fights some of gravity
-  { name: 'Changeup', from: 5, speed: 0.8, break: [0.9, -0.6] }, // slower, fading arm side
-  { name: 'Curveball', from: 9, speed: 0.74, break: [-2.4, -7.5] }, // the 12-to-6 dive
-  { name: 'Slider', from: 14, speed: 0.86, break: [-6.5, -2.2] }, // sharp sideways break
+  { name: 'Fastball', from: 1, speed: 1.0, break: [0, 3.2], spin: { axis: [-1, 0, 0], rps: 14 } }, // backspin lift
+  { name: 'Changeup', from: 5, speed: 0.8, break: [0.9, -0.6], spin: { axis: [-0.55, 0.83, 0], rps: 9 } }, // fading arm side
+  { name: 'Curveball', from: 9, speed: 0.74, break: [-2.4, -7.5], spin: { axis: [0.95, -0.3, 0], rps: 12 } }, // the 12-to-6 dive
+  { name: 'Slider', from: 14, speed: 0.86, break: [-6.5, -2.2], spin: { axis: [0.25, -0.75, 0.6], rps: 13 } }, // side spin, partly bullet
 ];

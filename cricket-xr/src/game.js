@@ -9,12 +9,12 @@ import {
   Vector3,
   VisibilityState,
 } from '@iwsdk/core';
-import { makeBall, setGlowForDistance } from './ball.js';
+import { BALL_RADIUS, makeBall, setGlowForDistance } from './ball.js';
 import { CFG, RESTART_POS, RESTART_RADIUS } from './config.js';
 import { Coach } from './coach.js';
 import { DesktopHand } from './desktop-hand.js';
 import { Effects, Sound } from './fx.js';
-import { useSkinHands } from './hands.js';
+import { trackedHands, useSkinHands } from './hands.js';
 import { COLORS, Hud } from './hud.js';
 import { buildStadium } from './stadium.js';
 
@@ -48,6 +48,15 @@ export class GameSystem extends createSystem({}) {
 
     this.ball = makeBall();
     this.ball.visible = false;
+    // While the ball is held, a faint outline of it shows through the hand, so the player always
+    // sees that it is in their hand (a real hand would feel it).
+    this.heldOutline = new Mesh(
+      new SphereGeometry(BALL_RADIUS * 1.02, 24, 16),
+      new MeshBasicMaterial({ color: 0xffe2b0, transparent: true, opacity: 0.32, depthTest: false, depthWrite: false }),
+    );
+    this.heldOutline.renderOrder = 20;
+    this.heldOutline.visible = false;
+    this.ball.add(this.heldOutline);
     this.world.createTransformEntity(this.ball);
 
     this.marker = new Mesh(
@@ -72,10 +81,35 @@ export class GameSystem extends createSystem({}) {
     this.desktop = new DesktopHand(this.world);
     this.cleanupFuncs.push(() => this.desktop.dispose());
 
+    // Each hand's palm: centre, the way it faces (when known), and where it was last frame (so the
+    // catch test can follow a moving hand). Read from the drawn hand's joints when available.
     this.palm = { left: new Vector3(), right: new Vector3() };
     this.palmOk = { left: false, right: false };
+    this.palmNormal = { left: new Vector3(0, 0, -1), right: new Vector3(0, 0, -1) };
+    this.palmNormalOk = { left: false, right: false };
+    this.palmFingers = { left: new Vector3(0, 1, 0), right: new Vector3(0, 1, 0) };
+    this.palmThumb = { left: new Vector3(1, 0, 0), right: new Vector3(-1, 0, 0) }; // towards the thumb
+    this.prevPalm = { left: new Vector3(), right: new Vector3() };
+    this.prevPalmOk = { left: false, right: false };
+    this.palmFromJoints = true; // the headless test turns this off to place hands by their grip pose
+    this.rel0 = new Vector3();
+    this.rel1 = new Vector3();
+    this.contact = new Vector3();
+    this.settleFrom = new Vector3();
+    this.heldAt = new Vector3();
+    this.restAt = new Vector3(); // where a caught ball rests in the hand
+    this.j = [new Vector3(), new Vector3(), new Vector3(), new Vector3()];
+    this.settle = 0;
+    this.settleScale = 1;
+    this.nearest = Infinity;
+    this.deflected = false;
+    this.twoHanded = false;
+    this.lastResult = null;
     this.prev = new Vector3();
     this.vel = new Vector3();
+    this.launchFrom = new Vector3(); // the flight is exact: from + launchVel t + accel t^2 / 2
+    this.launchVel = new Vector3();
+    this.accel = new Vector3();
     this.tmp = new Vector3();
     this.seg = new Vector3();
     this.aim = new Vector3();
@@ -136,6 +170,9 @@ export class GameSystem extends createSystem({}) {
       get best() { return this.sys.best; },
       get skinHands() { return this.sys.skinHands; },
       get contactGap() { return this.sys.contactGap; },
+      get nearest() { return this.sys.nearest; },
+      get lastResult() { return this.sys.lastResult; },
+      get twoHanded() { return this.sys.twoHanded; },
       sys: this,
       start: () => this.tryStart(),
     };
@@ -168,6 +205,7 @@ export class GameSystem extends createSystem({}) {
     this.streak = 0;
     this.bestStreak = 0;
     this.heldBy = null;
+    this.heldOutline.visible = false;
     this.ball.visible = false;
     this.aimRing.visible = false;
     this.marker.visible = false;
@@ -241,24 +279,39 @@ export class GameSystem extends createSystem({}) {
       dz / flight,
     );
     this.aimRing.position.copy(this.aim);
+    this.accel.set(this.side * this.swingA, -CFG.gravity, 0); // the swing, and gravity
+    this.launchFrom.copy(from);
+    this.launchVel.copy(this.vel);
     this.ball.position.copy(from);
     // Seam upright, leaning a little towards the way the ball will swing, like a real swing ball.
     this.ball.rotation.set(0, Math.random() * Math.PI * 2, Math.PI / 2 - this.side * 0.3);
     setGlowForDistance(this.ball, CFG.arriveZ - from.z);
     this.life = 0;
+    this.nearest = Infinity;
+    this.deflected = false;
+    this.twoHanded = false;
+    this.prevPalmOk.left = false;
+    this.prevPalmOk.right = false;
     this.sound.crack();
     this.state = 'flying';
   }
 
+  // The ball has touched `side`'s hand, at its current position. It settles into the palm from there.
   caught(side) {
     this.state = 'feedback';
     this.timer = CFG.feedbackDelay;
     this.heldBy = side;
+    this.lastResult = 'caught';
+    this.settle = 0;
+    this.settleFrom.copy(this.ball.position);
+    this.settleScale = this.ball.scale.x;
+    const other = side === 'left' ? 'right' : 'left';
+    this.twoHanded = this.palmOk[other] && this.palm[other].distanceTo(this.ball.position) <= CFG.twoHandGap;
     this.score++;
     this.streak++;
     this.bestStreak = Math.max(this.bestStreak, this.streak);
     this.aimRing.visible = false;
-    this.fx.burst(this.palm[side]);
+    this.fx.burst(this.ball.position); // at the point of contact
     this.sound.caught();
     this.coach.cheer();
     this.hud.set({ score: this.score });
@@ -269,26 +322,34 @@ export class GameSystem extends createSystem({}) {
       catchMsg = 'LOW CATCH!';
     } else if (this.streak >= 3) {
       catchMsg = `CAUGHT!  ${this.streak} in a row`;
+    } else if (this.twoHanded) {
+      catchMsg = 'CAUGHT!  Safe hands';
     }
     this.message(catchMsg, COLORS.good, CFG.feedbackDelay);
   }
 
-  missed() {
+  // why: 'missed' (it went past) or 'back' (it glanced off the back of a hand).
+  missed(why = 'missed') {
     this.state = 'feedback';
     this.timer = CFG.feedbackDelay;
     this.heldBy = null;
-    this.ball.visible = false;
+    this.lastResult = why;
+    this.ball.visible = why === 'back'; // a deflected ball is seen flying off
     this.misses++;
     this.streak = 0;
     this.aimRing.visible = false;
     this.sound.missed();
     this.coach.shrug();
     this.hud.set({ misses: this.misses });
-    this.message('MISSED', COLORS.bad, CFG.feedbackDelay);
+    let msg = 'MISSED';
+    if (why === 'back') msg = 'Off the back of the hand';
+    else if (this.nearest < CFG.nearMiss) msg = `Just missed: ${Math.max(1, Math.round(this.nearest * 100))} cm`;
+    this.message(msg, COLORS.bad, CFG.feedbackDelay);
   }
 
   afterFeedback() {
     this.heldBy = null;
+    this.heldOutline.visible = false;
     this.ball.visible = false;
     if (this.ballNo >= CFG.balls) {
       this.finishRound();
@@ -333,30 +394,42 @@ export class GameSystem extends createSystem({}) {
   readPalms() {
     this.desktop.update();
     if (this.desktop.active) {
-      // No headset: the mouse is the right hand.
+      // No headset: the mouse is the right hand, held up with its palm to the coach.
       this.palm.right.copy(this.desktop.position);
       this.palmOk.right = true;
       this.palmOk.left = false;
+      this.palmNormal.right.set(0, 0, -1);
+      this.palmNormalOk.right = true;
+      this.palmFingers.right.set(0, 1, 0);
+      this.palmThumb.right.set(-1, 0, 0);
       return;
     }
     for (const side of ['left', 'right']) {
       const space = this.player.gripSpaces[side];
-      space.getWorldPosition(this.palm[side]);
       this.palmOk[side] = space.visible;
+      this.palmNormalOk[side] = false;
+      const hand = trackedHands[side];
+      const j = hand && hand.joints;
+      if (
+        this.palmFromJoints && space.visible && j && hand.model.visible &&
+        j.wrist && j['middle-finger-phalanx-proximal'] && j['index-finger-metacarpal'] && j['pinky-finger-metacarpal']
+      ) {
+        // The palm as it is drawn: between the wrist and the knuckles, on the skin of the palm.
+        const wrist = j.wrist.getWorldPosition(this.j[0]);
+        const knuckle = j['middle-finger-phalanx-proximal'].getWorldPosition(this.j[1]);
+        const fingers = this.palmFingers[side].subVectors(knuckle, wrist).normalize();
+        const across = j['index-finger-metacarpal'].getWorldPosition(this.j[2]).sub(j['pinky-finger-metacarpal'].getWorldPosition(this.j[3]));
+        across.addScaledVector(fingers, -across.dot(fingers)).normalize();
+        this.palmThumb[side].copy(across); // index side: the thumb is that way
+        // For a right hand, across x fingers points out of the palm; a left hand is its mirror image.
+        const normal = this.palmNormal[side].crossVectors(across, fingers).normalize();
+        if (side === 'left') normal.negate();
+        this.palm[side].copy(wrist).lerp(knuckle, 0.55).addScaledVector(normal, 0.012);
+        this.palmNormalOk[side] = true;
+      } else {
+        space.getWorldPosition(this.palm[side]);
+      }
     }
-  }
-
-  // Distance from point p to the segment a->b, using this.seg as scratch.
-  distToSegment(p, a, b) {
-    this.seg.copy(b).sub(a);
-    const lenSq = this.seg.lengthSq();
-    let t = 0;
-    if (lenSq > 0) {
-      t = this.tmp.copy(p).sub(a).dot(this.seg) / lenSq;
-      t = Math.min(1, Math.max(0, t));
-    }
-    this.tmp.copy(a).addScaledVector(this.seg, t);
-    return this.tmp.distanceTo(p);
   }
 
   // ---------- frame ----------
@@ -421,10 +494,12 @@ export class GameSystem extends createSystem({}) {
   }
 
   updateFlight(dt) {
+    // Exact flight (not stepped): the swing and gravity bend it, and it arrives precisely where it
+    // was aimed (where the ring is), whatever the frame rate.
     this.prev.copy(this.ball.position);
-    this.vel.y -= CFG.gravity * dt;
-    this.vel.x += this.side * this.swingA * dt; // the swing: sideways force in the air
-    this.ball.position.addScaledVector(this.vel, dt);
+    const t = this.life + dt;
+    this.ball.position.copy(this.launchFrom).addScaledVector(this.launchVel, t).addScaledVector(this.accel, 0.5 * t * t);
+    this.vel.copy(this.launchVel).addScaledVector(this.accel, t);
     this.ball.rotation.y += 18 * dt; // spin about the seam
     // Real size in the coach's hand, growing to the game's catchable size as it leaves the bat.
     this.ball.scale.setScalar(Math.min(1, this.coach.ballScale + this.life * 2.5));
@@ -432,23 +507,90 @@ export class GameSystem extends createSystem({}) {
     this.life += dt;
     this.fx.trailPoint(this.ball.position, dt);
 
-    // Swept test so a fast ball cannot skip past a hand between two frames.
+    // Contact: the ball touches a hand when its centre comes within (its radius + the hand's margin) of
+    // the palm. The test is swept between frames, relative to the hand, so neither a fast ball nor a
+    // fast hand can pass through the other between two frames.
+    const reach = BALL_RADIUS * this.ball.scale.x + CFG.handMargin;
+    let hit = null;
+    let hitD = Infinity;
+    let hitBack = false;
     for (const side of ['left', 'right']) {
-      if (this.palmOk[side] && this.distToSegment(this.palm[side], this.prev, this.ball.position) <= CFG.catchRadius) {
-        this.caught(side);
-        return;
+      if (!this.palmOk[side]) continue;
+      const p1 = this.palm[side];
+      // Where the hand was last frame (unless tracking jumped, or this is the first frame).
+      const p0 = this.prevPalmOk[side] && this.prevPalm[side].distanceTo(p1) < 0.5 ? this.prevPalm[side] : p1;
+      const r0 = this.rel0.subVectors(this.prev, p0);
+      const r1 = this.rel1.subVectors(this.ball.position, p1);
+      const seg = this.seg.subVectors(r1, r0);
+      const lenSq = seg.lengthSq();
+      const t = lenSq > 0 ? Math.min(1, Math.max(0, -r0.dot(seg) / lenSq)) : 0;
+      const closest = this.contact.copy(r0).addScaledVector(seg, t);
+      const d = closest.length();
+      this.nearest = Math.min(this.nearest, Math.max(0, d - reach));
+      if (d <= reach && d < hitD) {
+        hit = side;
+        hitD = d;
+        // Which side of the hand did it come from? Behind the palm means the back of the hand. (If the
+        // hand was already on the ball last frame, the way the ball is travelling tells.)
+        const from = r0.lengthSq() > 1e-6 ? this.tmp.copy(r0) : this.tmp.copy(this.vel).negate();
+        hitBack = this.palmNormalOk[side] && this.palmNormal[side].dot(from.normalize()) < CFG.backOfHand;
+        this.heldAt.copy(p1).add(closest); // the point of contact, in world space
       }
+    }
+    for (const side of ['left', 'right']) {
+      this.prevPalm[side].copy(this.palm[side]);
+      this.prevPalmOk[side] = this.palmOk[side];
+    }
+    if (hit) {
+      this.ball.position.copy(this.heldAt);
+      if (hitBack) this.deflect(hit);
+      else this.caught(hit);
+      return;
     }
     if (this.ball.position.z >= CFG.missZ || this.life > CFG.maxLife) this.missed();
   }
 
+  // Off the back of the hand: the ball bounces away from it, losing most of its pace.
+  deflect(side) {
+    const n = this.palmNormal[side];
+    const vn = this.vel.dot(n);
+    this.vel.addScaledVector(n, -2 * vn).multiplyScalar(0.35);
+    this.vel.addScaledVector(n, -0.8);
+    this.deflected = true;
+    this.missed('back');
+  }
+
   updateFeedback(dt) {
     if (this.heldBy) {
-      this.ball.scale.setScalar(0.55);
-      this.ball.position.copy(this.palm[this.heldBy]);
-      this.ball.position.z -= 0.035;
-      this.ball.position.y += 0.02;
-      this.ball.position.x += (this.heldBy === "left" ? 0.02 : -0.02);
+      // Where the ball rests: in the palm (on its skin, a little towards the fingers), or cradled
+      // between both palms for a two-handed catch. It eases there from the point of contact.
+      const side = this.heldBy;
+      const heldScale = 0.55;
+      const target = this.restAt;
+      if (this.twoHanded && this.palmOk.left && this.palmOk.right) {
+        target.copy(this.palm.left).add(this.palm.right).multiplyScalar(0.5);
+      } else if (this.palmNormalOk[side]) {
+        // In the cup of the hand: on the palm, towards the fingers and the thumb, so it shows past
+        // the edge of the hand from the player's eyes.
+        target.copy(this.palm[side])
+          .addScaledVector(this.palmNormal[side], BALL_RADIUS * heldScale + 0.004)
+          .addScaledVector(this.palmFingers[side], 0.022)
+          .addScaledVector(this.palmThumb[side], 0.03);
+      } else {
+        target.copy(this.palm[side]);
+        target.z -= 0.035;
+        target.y += 0.02;
+        target.x += side === 'left' ? 0.02 : -0.02;
+      }
+      this.heldOutline.visible = true;
+      this.settle = Math.min(1, this.settle + dt / CFG.settleTime);
+      const k = this.settle * this.settle * (3 - 2 * this.settle);
+      this.ball.position.lerpVectors(this.settleFrom, target, k);
+      this.ball.scale.setScalar(this.settleScale + (heldScale - this.settleScale) * k);
+    } else if (this.deflected && this.ball.visible) {
+      this.vel.y -= CFG.gravity * dt;
+      this.ball.position.addScaledVector(this.vel, dt);
+      if (this.ball.position.y < 0.05 || this.timer < 0.3) this.ball.visible = false;
     }
     this.timer -= dt;
     if (this.timer <= 0) this.afterFeedback();

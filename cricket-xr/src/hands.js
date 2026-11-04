@@ -10,12 +10,20 @@ import { AnimatedHand, MeshStandardMaterial } from '@iwsdk/core';
 
 export const skin = new MeshStandardMaterial({ color: 0xc58c66, roughness: 0.62, metalness: 0 });
 
+// Each tracked hand registers its joints here, so the game can catch with the hand where it is
+// drawn (its palm and its facing) rather than with the grip pose, which sits a little apart.
+export const trackedHands = { left: null, right: null };
+const JOINTS = ['wrist', 'middle-finger-phalanx-proximal', 'index-finger-metacarpal', 'pinky-finger-metacarpal'];
+
 function handClass(side) {
   class SkinHand extends AnimatedHand {
     init() {
       const mesh = this.model.getObjectByProperty('type', 'SkinnedMesh');
       mesh.frustumCulled = false;
       mesh.material = skin;
+      const joints = {};
+      for (const name of JOINTS) joints[name] = this.model.getObjectByName(name) || null;
+      trackedHands[side] = { model: this.model, joints };
     }
   }
   SkinHand.assetKeyPrefix = 'cricket-hand';

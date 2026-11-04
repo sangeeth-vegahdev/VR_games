@@ -159,6 +159,13 @@ export class Pitcher {
     this.mound.add(this.body);
     world.createTransformEntity(this.mound);
 
+    // Inside his glove the left hand's fingers are straight (the idle clip curls them into a fist,
+    // which would poke out through the pocket): keep their rest pose every frame.
+    this.gloveFingers = [];
+    this.model.traverse((o) => {
+      if (/^(index|middle|ring|pinky|thumb)_0[123]_l$/.test(o.name)) this.gloveFingers.push({ bone: o, rest: o.quaternion.clone() });
+    });
+
     this.mixer = new AnimationMixer(this.model);
     const idle = gltf.animations.find((c) => c.name === 'Idle_Loop');
     this.mixer.clipAction(idle).setLoop(LoopRepeat, Infinity).play();
@@ -195,6 +202,8 @@ export class Pitcher {
       legR: bodyInv.clone().multiply(this.bones.legR.foot.getWorldQuaternion(new Quaternion())),
     };
 
+    this.straightenGloveHand();
+    this.mound.updateMatrixWorld(true);
     this.addGlove();
     this.addCap();
 
@@ -255,9 +264,10 @@ export class Pitcher {
     const x = new Vector3().crossVectors(fingers, normal);
     glove.quaternion.setFromRotationMatrix(new Matrix4().makeBasis(x, fingers, normal));
     if (x.dot(across) < 0) glove.scale.x = -1; // the glove's thumb goes on the index-finger side
-    const size = 0.78 / this.scale; // a fielder's glove is smaller than the catcher's mitt
+    const size = 0.86 / this.scale; // a fielder's glove is a little smaller than the catcher's mitt
     glove.scale.multiplyScalar(size);
-    glove.position.copy(wrist).lerp(knuckle, 0.6).addScaledVector(normal, 0.03 * this.scale);
+    // The hand goes inside the mitt, behind the pocket (in its padding), not in front of it.
+    glove.position.copy(wrist).lerp(knuckle, 0.78).addScaledVector(normal, 0.072 * this.scale);
     glove.traverse((o) => {
       if (o.isMesh) o.castShadow = true;
     });
@@ -315,8 +325,18 @@ export class Pitcher {
     this.held = 'none';
   }
 
+  straightenGloveHand() {
+    for (const f of this.gloveFingers) {
+      f.bone.quaternion.copy(f.rest);
+      // The thumb's rest pose points forward, out through the pocket; inside the glove it is tucked
+      // away (its outer joints folded to nothing, hidden by the leather).
+      if (f.bone.name === 'thumb_01_l') f.bone.scale.setScalar(0.05);
+    }
+  }
+
   update(dt) {
     this.mixer.update(dt);
+    this.straightenGloveHand();
     if (this.move) {
       this.time += dt;
       sample(this.move.keys, Math.min(this.time, this.move.duration), this.pose);

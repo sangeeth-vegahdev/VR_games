@@ -38,8 +38,16 @@ inside a cyan ring that shows its catch reach) and touch the green ball to start
   maximum, with a little speed variety so later balls are not identical.
 - A round is 50 balls (about 3 minutes). Change `balls` in `src/config.js` for 100, or add `?balls=N` to
   the URL for a one-off length.
-- A catch is a palm within `catchRadius` of the ball's path. The test is swept between frames so a
-  fast ball cannot skip past a hand.
+- **Catching is contact with the hand as it is drawn.** The palm, its facing and its fingers are read
+  from the tracked hand's joints (not the grip pose, which sits a couple of centimetres away). A catch
+  is the ball's centre coming within its own radius plus `handMargin` (6.5 cm: the palm's width and the
+  fingers) of the palm. The test is swept between frames *relative to the hand*, so neither a fast ball
+  nor a fast hand can pass through the other. The flight itself is exact (not stepped frame by frame),
+  so the ball arrives precisely at the ring, whatever the frame rate.
+- A ball arriving behind the palm glances off the back of the hand. Both palms near the ball make a
+  two-handed catch, cradled between them. A caught ball eases into the cup of the hand from the point of
+  contact (no snapping), resting towards the thumb so it shows past the edge of the hand, with a faint
+  outline through the hand. A near miss tells you by how much ("Just missed: 7 cm").
 - A soft ring marks where the ball will arrive, over the last 9 m of its flight (`aimHint` in `config.js`).
 - The ball is a cricket ball drawn in code: red leather and a stitched seam, held upright and leaning
   towards the way it swings, spinning about the seam. A soft glow helps you pick it up off the bat and fades
@@ -71,11 +79,17 @@ inside a cyan ring that shows its catch reach) and touch the green ball to start
 
 ## Tuning
 
-`src/config.js`: `balls`, `rampBalls`, `startSpeed`, `maxSpeed`, `swingBase`, `swingMax`, `catchRadius`. `src/game.js`
-reads the palm position from the player's grip space; if catches feel off on a real headset, adjust
-`catchRadius` first.
+`src/config.js`: `balls`, `rampBalls`, `startSpeed`, `maxSpeed`, `swingBase`, `swingMax`, `handMargin`,
+`backOfHand`, `settleTime`. `src/game.js` reads the palm from the tracked hand's joints (falling back to
+the grip pose); if catches feel too strict or too generous on a real headset, adjust `handMargin` first.
 
 ## Test
+
+Quick checks that need no browser, no headset and no dev server (a few seconds):
+
+```bash
+npm run test:unit        # node --test: tuning, the flight maths and the catch logic
+```
 
 With `npm run dev:runtime` running:
 
@@ -87,10 +101,14 @@ CHROME_PATH=/path/to/chrome node tests/headless-game.cjs
 ```
 
 It starts an emulated XR session, then plays one round with every ball caught, restarts by touching the
-green ball, and plays a round with every ball missed. It checks that speed ramps up and stays under the cap,
+green ball, and plays a round with every ball missed. It then checks the catch itself: the palm read
+from the drawn hand faces the way the hand does; a ball 23 cm from the hand is missed (and the miss
+says by how much); a ball touching the fingers is caught; a hand flicking across the ball's path catches
+it; a ball meeting the back of the hand glances off; two hands make a cradled two-handed catch; a caught
+ball eases into the cup of the hand; and every ball arrives at the ring within 1 cm. It checks that speed ramps up and stays under the cap,
 that the ball swings, that the swing grows, that both tracked hands are drawn with the game's own hand models,
 that the coach's toss meets the bat (under 5 cm at contact) on every ball, that a mouse player can finish a
-round, and that the page logs no errors (14 checks).
+round, and that the page logs no errors (25 checks).
 
 The rounds are stepped at a fixed 60 Hz inside the page, and the palm is placed on the ball's grip space
 directly. The software renderer in a container runs at a few frames per second, so real-time play would take

@@ -25,8 +25,20 @@ export class PlayerGlove {
     this.pocket = new Vector3(); // world position of the pocket centre
     this.normal = new Vector3(0, 0, -1); // which way the pocket opens
     this.ok = false; // is the mitt being tracked this frame?
+    this.prevPocket = new Vector3(); // last frame's pocket, so catches follow a moving mitt
+    this.prevOk = false;
     this.squeeze = 0; // 0..1 from the player's fingers
     this.hold = 0; // forced closed while holding a caught ball
+    this.closed = 0; // how closed the mitt is drawn: snaps shut on a catch, opens gently
+    // Recoil: the mitt is knocked back by the ball, then springs back (drawn only; the catch uses
+    // the hand's real position).
+    this.kick = new Vector3();
+    this.kickVel = new Vector3();
+    this.tilt = 0; // ...and is tipped back (radians about its own x axis), then springs back
+    this.tiltVel = 0;
+    this.baseQuat = new Quaternion();
+    this.tiltQuat = new Quaternion();
+    this.xAxis = new Vector3(1, 0, 0);
 
     this.v = Array.from({ length: 8 }, () => new Vector3());
     this.m = new Matrix4();
@@ -38,7 +50,15 @@ export class PlayerGlove {
     this.side = side;
   }
 
-  update(player, desktop, inHeadset) {
+  // The ball smacks into the pocket travelling along `dir` (unit) at `speed` m/s.
+  impact(dir, speed) {
+    this.kickVel.addScaledVector(dir, Math.min(1.6, 0.35 + speed * 0.045));
+    this.tiltVel -= Math.min(2.2, 0.5 + speed * 0.06); // fingers tip back towards the catcher
+  }
+
+  update(player, desktop, inHeadset, dt = 1 / 60) {
+    this.prevPocket.copy(this.pocket);
+    this.prevOk = this.ok;
     if (!inHeadset) {
       this.updateDesktop(desktop);
     } else {
@@ -49,8 +69,20 @@ export class PlayerGlove {
       const h = trackedHands[s];
       if (h && h.mesh) h.mesh.visible = s !== this.side;
     }
-    const close = Math.max(this.squeeze, this.hold);
-    this.mitt.setClose(close);
+    const want = Math.max(this.squeeze, this.hold);
+    const rate = want > this.closed ? 16 : 6;
+    this.closed += (want - this.closed) * Math.min(1, rate * dt);
+    this.mitt.setClose(this.closed);
+    // Recoil spring (a little under-damped, so it settles with a slight give).
+    const k = 360;
+    const c = 2 * Math.sqrt(k) * 0.6;
+    this.kickVel.addScaledVector(this.kick, -k * dt).multiplyScalar(Math.max(0, 1 - c * dt));
+    this.kick.addScaledVector(this.kickVel, dt);
+    this.tiltVel += -k * this.tilt * dt;
+    this.tiltVel *= Math.max(0, 1 - c * dt);
+    this.tilt += this.tiltVel * dt;
+    this.object.position.copy(this.pocket).add(this.kick);
+    this.object.quaternion.copy(this.baseQuat).multiply(this.tiltQuat.setFromAxisAngle(this.xAxis, this.tilt));
     this.object.visible = this.ok;
   }
 
@@ -101,6 +133,7 @@ export class PlayerGlove {
     const x = this.v[5].crossVectors(y, z);
     this.m.makeBasis(x, y, z);
     this.object.quaternion.setFromRotationMatrix(this.m);
+    this.baseQuat.copy(this.object.quaternion);
     // Mirror the mitt so its thumb sits on the hand's thumb side.
     const flip = exact ? thumb : this.side === 'left' ? -1 : 1;
     this.object.scale.set(flip, 1, 1);
@@ -110,10 +143,20 @@ export class PlayerGlove {
   }
 }
 
-// Position of the bare hand (the one without the mitt), for "use the glove" misses.
-export function bareHand(player, gloveSide, out) {
+// Palm of the bare hand (the one without the mitt), for "use the mitt" misses: from the drawn
+// hand's joints when they are available, else its grip pose.
+const W = new Vector3();
+const K = new Vector3();
+export function bareHand(player, gloveSide, out, useJoints = true) {
   const side = gloveSide === 'left' ? 'right' : 'left';
   const grip = player.gripSpaces[side];
   if (!grip.visible) return null;
+  const hand = trackedHands[side];
+  const j = hand && hand.joints;
+  if (useJoints && j && j.wrist && j['middle-finger-phalanx-proximal'] && hand.model.visible) {
+    j.wrist.getWorldPosition(W);
+    j['middle-finger-phalanx-proximal'].getWorldPosition(K);
+    return out.copy(W).lerp(K, 0.55);
+  }
   return grip.getWorldPosition(out);
 }

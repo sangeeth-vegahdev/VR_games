@@ -11,7 +11,13 @@ export const CFG = {
   swingBase: 1.4, // sideways acceleration (m/s^2) for ball 1
   swingMax: 7, // faster balls are airborne for less time, so swing must grow to keep bending
   gravity: 3, // stylised, so the ball arcs gently instead of dropping like a stone
-  catchRadius: 0.25, // palm-to-ball distance that counts as a catch
+  // A catch is the ball touching the hand: its centre within (ball radius + handMargin) of the palm.
+  // The margin covers the palm's width and the fingers, so contact is where the hand is drawn.
+  handMargin: 0.065,
+  backOfHand: -0.5, // a ball arriving this far behind the palm (cosine) glances off the back of the hand
+  settleTime: 0.09, // seconds for a caught ball to settle into the palm (no snapping)
+  twoHandGap: 0.24, // both palms within this of the ball at contact: a two-handed catch
+  nearMiss: 0.4, // a miss closer than this tells you by how much
   arriveZ: -0.65, // how far in front of the player the ball arrives: comfortable arm's reach
   targetSpreadX: 0.35, // random arrival offset left/right (kept inside the headset's field of view)
   targetSpreadY: 0.15, // random arrival offset up/down
