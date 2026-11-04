@@ -47,8 +47,14 @@ and G to swap the mitt to the other hand. Eye focus is not measured on a PC.
 - **The mitt**: a catcher's mitt built in code (padded pocket, laced rolled rim, hinged thumb, web, wrist
   strap with a club patch). It sits on your glove hand (left by default; touch the gold ball on the menu to
   swap, or `?glove=right`) from the hand-tracking joints, and closes as you close your fingers. Only the mitt
-  catches: a pitch that hits your bare hand is a miss ("Use the mitt!"). A catch is the pocket within
-  `catchRadius` of the ball's path, swept between frames so a fast pitch cannot skip through.
+  catches: a pitch that hits your bare hand is a miss ("Use the mitt!").
+- **The catch is contact with the mitt.** A catch is the ball's centre arriving within `catchRadius`
+  (15 cm, inside the mitt's 29 cm face) of the pocket, from the front: a pitch that meets the back of the
+  mitt glances off. The test is swept between frames relative to the moving mitt, so neither a fast pitch
+  nor a fast mitt passes through the other, and the flight is exact (not stepped), so every pitch crosses
+  precisely where it was aimed. On a catch the mitt is knocked back by the ball and springs back, snaps
+  shut, and the ball eases into the pocket from where it hit; a faint outline shows it through the
+  leather. A near miss tells you by how much ("Just missed: 9 cm").
 - **Eyes on the ball** (`src/gaze.js`): the game asks the headset for eye gaze (`gazeTracking` in
   `iwsdk.config.json`). With eye tracking (Quest Pro, or any headset that exposes it) it uses your eyes;
   without it (Quest 3 and 3S have no eye-tracking cameras) it uses the direction of your head, with a wider
@@ -81,7 +87,7 @@ and G to swap the mitt to the other hand. Eye focus is not measured on a PC.
 | `src/hud.js` | World-space scoreboard and title / round-over card (canvas textures) |
 | `src/fx.js` | Sound (generated, plus CC0 files) and particles |
 | `tools/pitcher/` | Scripts that rebuild `public/models/pitcher.glb` from the CC0 source packs (see its README) |
-| `tests/headless-game.cjs` | End-to-end test with the emulated headset and hands (22 checks) |
+| `tests/headless-game.cjs` | End-to-end test with the emulated headset and hands (30 checks) |
 | `tests/record-gameplay.cjs` | Records a catcher's-eye clip as PNG frames |
 | `ASSETS.md` | Where every model and sound came from, and its licence |
 
@@ -98,11 +104,15 @@ CHROME_PATH=/path/to/chrome node tests/headless-game.cjs
 It starts an emulated XR session with hands and plays: a round with every pitch caught in the mitt while
 watching the ball; a round with the hands away while looking at the sky; a round where the bare hand goes to
 every pitch; and, after swapping the mitt with the gold ball, a round caught with the other hand. Then a
-desktop round with the mouse. The 22 checks cover catches and misses, bare-hand misses, all four pitch types
+desktop round with the mouse, and the catch itself: a pitch 27 cm from the pocket is missed (and says
+by how much), one into the edge of the pocket is caught, a mitt flicking across the pitch's line catches
+it, a pitch into the back of the mitt glances off, the ball settles into the pocket without snapping,
+the mitt recoils and springs back, and it snaps shut. The 30 checks also cover catches and misses, bare-hand misses, all four pitch types
 appearing, the curveball dropping and the slider sliding more than the fastball, the speed ramp and cap, the
 ball staying in the pitcher's fingers until release, the release point, high focus when watching and low
 focus when looking away, the streak and the saved best, swapping hands, the hands and mitt drawn on the right
-hands with the mitt on the tracked hand, the mouse round, and no page errors.
+hands with the mitt on the tracked hand, every pitch crossing within 1 cm of its aim point, the mouse
+round, and no page errors.
 
 The rounds are stepped at a fixed 60 Hz inside the page with a fixed random seed, the mitt is driven from the
 grip pose, and the head is pointed by setting its pose (the software renderer in a container runs at a few

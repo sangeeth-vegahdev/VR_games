@@ -12,7 +12,7 @@ import {
   Vector3,
   VisibilityState,
 } from '@iwsdk/core';
-import { makeBall, setFocusGlow, setGlowForDistance } from './ball.js';
+import { BALL_RADIUS, makeBall, setFocusGlow, setGlowForDistance } from './ball.js';
 import { buildBallpark } from './ballpark.js';
 import { CFG, DEFAULT_GLOVE, PITCHES, START_POS, START_RADIUS, SWAP_POS, SWAP_RADIUS } from './config.js';
 import { DesktopPointer } from './desktop-pointer.js';
@@ -81,6 +81,15 @@ export class GameSystem extends createSystem({}) {
     this.ball = makeBall();
     this.ball.visible = false;
     this.world.createTransformEntity(this.ball);
+    // While the ball is in the mitt, a faint outline of it shows through the leather: the catcher
+    // sees the back of the mitt, and should still see the ball is in it.
+    this.heldOutline = new Mesh(
+      new SphereGeometry(BALL_RADIUS * 1.03, 24, 16),
+      new MeshBasicMaterial({ color: 0xfff6dc, transparent: true, opacity: 0.3, depthTest: false, depthWrite: false }),
+    );
+    this.heldOutline.renderOrder = 20;
+    this.heldOutline.visible = false;
+    this.ball.add(this.heldOutline);
 
     // Start ball, and a small orb that swaps the mitt to the other hand.
     this.marker = new Mesh(
@@ -124,13 +133,24 @@ export class GameSystem extends createSystem({}) {
 
     this.prev = new Vector3();
     this.vel = new Vector3();
+    this.launchFrom = new Vector3(); // the flight is exact: from + launchVel t + accel t^2 / 2
+    this.launchVel = new Vector3();
     this.accel = new Vector3();
     this.tmp = new Vector3();
     this.seg = new Vector3();
     this.aim = new Vector3();
     this.head = new Vector3();
     this.bare = new Vector3();
+    this.prevBare = new Vector3();
+    this.prevBareOk = false;
     this.menuPoints = [];
+    this.rel0 = new Vector3();
+    this.rel1 = new Vector3();
+    this.closest = new Vector3();
+    this.settleFrom = new Vector3();
+    this.restAt = new Vector3();
+    this.settle = 0;
+    this.nearest = Infinity; // closest the ball came to touching the mitt, beyond contact (m)
 
     this.state = 'idle';
     this.timer = 0;
@@ -188,6 +208,7 @@ export class GameSystem extends createSystem({}) {
       get ballPos() { return this.sys.ball.position; },
       get gloveSide() { return this.sys.glove.side; },
       get pocket() { return this.sys.glove.pocket; },
+      get nearest() { return this.sys.nearest; },
       get focusMode() { return this.sys.focus.mode; },
       get lastFocus() { return this.sys.lastFocus; },
       get lastResult() { return this.sys.lastResult; },
@@ -296,24 +317,34 @@ export class GameSystem extends createSystem({}) {
     this.pitcher.releaseBall();
     const T = from.distanceTo(this.aim) / this.speed;
     this.vel.subVectors(this.aim, from).divideScalar(T).addScaledVector(this.accel, -0.5 * T);
+    this.launchFrom.copy(from);
+    this.launchVel.copy(this.vel);
     this.ball.position.copy(from);
     this.ball.rotation.set(Math.random() * 6, Math.random() * 6, 0);
     this.life = 0;
     this.zone.position.copy(this.aim);
+    this.nearest = Infinity;
+    this.prevBareOk = false;
     this.sound.whoosh();
     this.state = 'flying';
     this.hud.set({ pitchName: this.pitchType.name, mph: this.mph });
   }
 
+  // The ball has met the pocket, at its current position: it settles in from there, and the
+  // mitt is knocked back and snaps shut round it.
   caught() {
     this.state = 'feedback';
     this.timer = CFG.feedbackDelay;
     this.held = true;
+    this.settle = 0;
+    this.settleFrom.copy(this.ball.position);
+    const speed = this.vel.length();
+    if (speed > 0) this.glove.impact(this.tmp.copy(this.vel).divideScalar(speed), speed);
     this.catches++;
     this.streak++;
     this.bestStreak = Math.max(this.bestStreak, this.streak);
     this.zone.visible = false;
-    this.fx.burst(this.glove.pocket);
+    this.fx.burst(this.ball.position); // at the point of contact
     this.sound.caught(this.streak);
     this.reaction = 'cheer';
     this.lastResult = 'caught';
@@ -339,11 +370,18 @@ export class GameSystem extends createSystem({}) {
     this.hud.set({ misses: this.misses });
     let msg = 'MISSED';
     if (why === 'bare') msg = 'Use the mitt!';
+    else if (why === 'back') msg = 'Off the back of the mitt';
+    else if (this.nearest < CFG.nearMiss) msg = `Just missed: ${Math.max(1, Math.round(this.nearest * 100))} cm`;
     else if (this.lastFocus !== null && this.focus.lostAt !== null) msg = `Eyes left it at ${Math.max(1, Math.round(this.focus.lostAt))} m`;
     this.message(msg, COLORS.bad, CFG.feedbackDelay);
     if (why === 'bare') {
       // Knocked away off the bare hand.
       this.vel.set(this.vel.x * 0.3 + (Math.random() - 0.5) * 3, 2.5, -Math.abs(this.vel.z) * 0.25);
+    } else if (why === 'back') {
+      // Glances off the back of the mitt, losing most of its pace.
+      const n = this.glove.normal;
+      this.vel.addScaledVector(n, -2 * this.vel.dot(n)).multiplyScalar(0.3).addScaledVector(n, -0.8);
+      this.glove.impact(this.tmp.copy(n).negate(), 6);
     }
   }
 
@@ -360,6 +398,7 @@ export class GameSystem extends createSystem({}) {
 
   afterFeedback() {
     this.held = false;
+    this.heldOutline.visible = false;
     this.ball.visible = false;
     if (this.pitchNo >= CFG.pitches) {
       this.finishRound();
@@ -402,20 +441,6 @@ export class GameSystem extends createSystem({}) {
     this.hud.set({ message: text, color });
   }
 
-  // ---------- helpers ----------
-  // Distance from point p to the segment a->b.
-  distToSegment(p, a, b) {
-    this.seg.copy(b).sub(a);
-    const lenSq = this.seg.lengthSq();
-    let t = 0;
-    if (lenSq > 0) {
-      t = this.tmp.copy(p).sub(a).dot(this.seg) / lenSq;
-      t = Math.min(1, Math.max(0, t));
-    }
-    this.tmp.copy(a).addScaledVector(this.seg, t);
-    return this.tmp.distanceTo(p);
-  }
-
   // ---------- frame ----------
   update(dt) {
     dt = Math.min(dt, 0.05);
@@ -425,7 +450,7 @@ export class GameSystem extends createSystem({}) {
     const inHeadset = this.inHeadset();
     this.desktop.update();
     this.glove.hold = this.held ? 1 : 0;
-    this.glove.update(this.player, this.desktop, inHeadset);
+    this.glove.update(this.player, this.desktop, inHeadset, dt);
     this.focus.sample(this.player, this.world.camera, inHeadset);
     this.fx.update(dt);
     if (this.lockout > 0) this.lockout -= dt;
@@ -505,9 +530,12 @@ export class GameSystem extends createSystem({}) {
   }
 
   updateFlight(dt) {
+    // Exact flight (not stepped), so the pitch crosses precisely where it was aimed, whatever the
+    // frame rate.
     this.prev.copy(this.ball.position);
-    this.vel.addScaledVector(this.accel, dt);
-    this.ball.position.addScaledVector(this.vel, dt);
+    const t = this.life + dt;
+    this.ball.position.copy(this.launchFrom).addScaledVector(this.launchVel, t).addScaledVector(this.accel, 0.5 * t * t);
+    this.vel.copy(this.launchVel).addScaledVector(this.accel, t);
     this.ball.rotation.x += 30 * dt; // spinning seams
     // Real size in his hand, growing to the game's catchable size as it leaves.
     this.ball.scale.setScalar(Math.min(1, this.pitcher.ballScale + this.life * 1.5));
@@ -519,26 +547,62 @@ export class GameSystem extends createSystem({}) {
     setFocusGlow(this.ball, this.focus.watching);
     this.zone.visible = CFG.zoneHint && this.pitchNo <= CFG.zoneHintPitches;
 
-    // Swept test so a fast pitch cannot skip past the mitt between two frames.
-    if (this.glove.ok && this.distToSegment(this.glove.pocket, this.prev, this.ball.position) <= CFG.catchRadius) {
-      this.caught();
-      return;
+    // Contact with the mitt: swept between frames, relative to the mitt, so neither a fast pitch nor
+    // a fast mitt can pass through the other between two frames.
+    const g = this.glove;
+    if (g.ok) {
+      const d = this.sweep(g.prevOk ? g.prevPocket : g.pocket, g.pocket);
+      this.nearest = Math.min(this.nearest, Math.max(0, d - CFG.catchRadius));
+      if (d <= CFG.catchRadius) {
+        this.ball.position.copy(g.pocket).add(this.closest);
+        // From the front (into the pocket), or the back of the mitt?
+        const from = this.rel0.lengthSq() > 1e-6 ? this.tmp.copy(this.rel0) : this.tmp.copy(this.vel).negate();
+        if (g.normal.dot(from.normalize()) < CFG.backOfMitt) this.missed('back');
+        else this.caught();
+        return;
+      }
     }
     if (this.inHeadset()) {
-      const hand = bareHand(this.player, this.glove.side, this.bare);
-      if (hand && this.distToSegment(hand, this.prev, this.ball.position) <= CFG.bareHandRadius) {
-        this.missed('bare');
-        return;
+      const hand = bareHand(this.player, this.glove.side, this.bare, g.useJoints);
+      if (hand) {
+        const d = this.sweep(this.prevBareOk ? this.prevBare : hand, hand);
+        this.prevBare.copy(hand);
+        this.prevBareOk = true;
+        if (d <= CFG.bareHandRadius) {
+          this.ball.position.copy(hand).add(this.closest);
+          this.missed('bare');
+          return;
+        }
+      } else {
+        this.prevBareOk = false;
       }
     }
     if (this.ball.position.z >= CFG.missZ || this.life > CFG.maxLife) this.missed('missed');
   }
 
+  // Closest approach between the ball (from this.prev to its position now) and a point moving from
+  // p0 to p1 over the same frame. Leaves rel0 (ball relative to the point at the frame's start) and
+  // closest (the ball relative to the point at that moment) for the caller.
+  sweep(p0, p1) {
+    if (p0.distanceTo(p1) > 0.5) p0 = p1; // a tracking jump, not a real movement
+    const r0 = this.rel0.subVectors(this.prev, p0);
+    const r1 = this.rel1.subVectors(this.ball.position, p1);
+    const seg = this.seg.subVectors(r1, r0);
+    const lenSq = seg.lengthSq();
+    const t = lenSq > 0 ? Math.min(1, Math.max(0, -r0.dot(seg) / lenSq)) : 0;
+    return this.closest.copy(r0).addScaledVector(seg, t).length();
+  }
+
   updateFeedback(dt) {
     if (this.held) {
-      // In the pocket, a little sunk into the leather.
+      // In the pocket, a little sunk into the leather, moving with the mitt (and its recoil). It
+      // eases there from the point of contact.
+      this.restAt.copy(this.glove.object.position).addScaledVector(this.glove.normal, -0.012);
+      this.settle = Math.min(1, this.settle + dt / CFG.settleTime);
+      const k = this.settle * this.settle * (3 - 2 * this.settle);
       this.ball.scale.setScalar(1);
-      this.ball.position.copy(this.glove.pocket).addScaledVector(this.glove.normal, -0.012);
+      this.ball.position.lerpVectors(this.settleFrom, this.restAt, k);
+      this.heldOutline.visible = true;
     } else if (this.ball.visible) {
       // A missed ball carries on past the catcher, then is gone.
       this.vel.y -= CFG.gravity * dt;

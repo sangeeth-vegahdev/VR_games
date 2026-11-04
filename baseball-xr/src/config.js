@@ -11,8 +11,13 @@ export const CFG = {
   maxSpeed: 28, // m/s once fully ramped (63 mph): quick in VR, but readable
   speedJitter: 1.2,
   gravity: 9.81, // real gravity: a baseball drops visibly over 18 m
-  catchRadius: 0.17, // ball centre to the glove's pocket: the mitt is big
-  bareHandRadius: 0.09, // a ball this close to the bare hand is a "use the glove" miss
+  // A catch is the ball's centre arriving within catchRadius of the pocket's centre: inside the mitt's
+  // face (its rim is 29 cm across), coming in from the front. Swept between frames, with the mitt.
+  catchRadius: 0.15,
+  backOfMitt: -0.3, // arriving this far behind the pocket (cosine) it glances off the back of the mitt
+  settleTime: 0.06, // seconds for a caught ball to settle into the pocket (no snapping)
+  nearMiss: 0.4, // a miss closer than this tells you by how much
+  bareHandRadius: 0.1, // ball centre to the bare palm (ball radius plus the hand): "use the mitt"
   arriveZ: -0.55, // where pitches cross the catcher's reach, in front of the body
   zoneHalfWidth: 0.3, // pitches arrive within this much left/right of centre...
   zoneHalfHeight: 0.22, // ...and up/down around the target height
