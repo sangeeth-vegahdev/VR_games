@@ -218,6 +218,8 @@ const MAX_KMH = Math.round((22 + 1.5) * 3.6); // top speed incl. jitter
     return { rounds, restartedState, balls, contact };
   }, { balls: BALLS });
 
+  await page.close();
+
   // Desktop visitors (no headset): the mouse is the hand. Play a whole round with it.
   const desk = await browser.newPage({ ignoreHTTPSErrors: true, viewport: { width: 900, height: 700 } });
   desk.on('pageerror', (e) => errors.push('desktop: ' + e.message));

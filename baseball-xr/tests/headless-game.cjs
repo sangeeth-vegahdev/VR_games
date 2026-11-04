@@ -350,6 +350,8 @@ const MAX_MPH = Math.ceil(95 * 0.82 + (1.2 + 2.5) * 0.82); // the pro level's fa
     return { rounds, restarted, before, after, contact, mittShape };
   }, { pitches: PITCHES });
 
+  await page.close();
+
   // Desktop visitors (no headset): the mouse moves the mitt. Play a whole round with it.
   const desk = await browser.newPage({ ignoreHTTPSErrors: true, viewport: { width: 900, height: 700 } });
   desk.on('pageerror', (e) => errors.push('desktop: ' + e.message));

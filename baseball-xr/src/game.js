@@ -25,6 +25,7 @@ import {
 import { DesktopPointer } from './desktop-pointer.js';
 import { Effects, Sound } from './fx.js';
 import { FocusTracker } from './gaze.js';
+import { EyeRingTracker } from './eye-tracker.js';
 import { useSkinHands } from './hands.js';
 import { COLORS, Hud } from './hud.js';
 import { Pitcher } from './pitcher.js';
@@ -81,6 +82,7 @@ export class GameSystem extends createSystem({}) {
     this.pitcher = new Pitcher(this.world);
     this.hud = new Hud(this.world, CFG.pitches);
     this.focus = new FocusTracker();
+    this.eyeTracker = new EyeRingTracker(this.world);
 
     this.ball = makeBall();
     this.ball.visible = false;
@@ -260,6 +262,9 @@ export class GameSystem extends createSystem({}) {
       get nearest() { return this.sys.nearest; },
       get spot() { return this.sys.spot; },
       get focusMode() { return this.sys.focus.mode; },
+      get eyeTracker() { return this.sys.eyeTracker; },
+      get eyeTrackerPos() { return this.sys.eyeTracker.group.position; },
+      get eyeTrackerVisible() { return this.sys.eyeTracker.visible; },
       get lastFocus() { return this.sys.lastFocus; },
       get lastResult() { return this.sys.lastResult; },
       get best() { return this.sys.best; },
@@ -412,9 +417,11 @@ export class GameSystem extends createSystem({}) {
     this.ball.position.copy(this.pitcher.ballPos);
     setGlowForDistance(this.ball, 0);
     setFocusGlow(this.ball, false);
+    this.eyeTracker.hide();
     this.ball.visible = true;
     this.fx.clearTrail();
     this.focus.resetPitch();
+    this.eyeTracker.show();
     this.state = 'windup';
     this.hud.set({ pitchNo: this.pitchNo, pitchName: '' });
   }
@@ -608,6 +615,20 @@ export class GameSystem extends createSystem({}) {
       }
     }
     this.pitcher.update(dt);
+
+    if (this.state === 'windup' || this.state === 'flying') {
+      this.eyeTracker.update(
+        this.focus,
+        this.ball.position,
+        this.focus.watching,
+        inHeadset,
+        this.world.camera,
+        this.desktop,
+        dt,
+      );
+    } else {
+      this.eyeTracker.hide();
+    }
 
     switch (this.state) {
       case 'idle':

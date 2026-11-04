@@ -9,6 +9,7 @@ import {
   FRAME, INCH, LEVELS, levelById, MPH, PITCHES, pitchSpeed, REACH, SPEED, spinAxis, STRIKE_ZONE, umpire,
 } from '../src/pitches.js';
 import { FocusTracker } from '../src/gaze.js';
+import { EyeRingTracker, projectGazePoint } from '../src/eye-tracker.js';
 
 const BALL_RADIUS = 0.048; // src/ball.js
 
@@ -266,4 +267,48 @@ test('before any pitch is measured, focus is null', () => {
   f.sample(rig(), camera, true);
   f.resetPitch();
   assert.equal(f.focus, null);
+});
+
+test('eye ring tracker: projects gaze ray to the exact distance of the ball', () => {
+  const origin = new Vector3(0, 1.3, 0);
+  const dir = new Vector3(0, 0, -1);
+  const ball = new Vector3(0, 1.3, -12);
+  const pt = projectGazePoint(origin, dir, ball);
+  assert.ok(pt.distanceTo(ball) < 1e-6, 'ring is centered on the ball when gaze is direct');
+
+  // Gaze tilted 15 degrees right
+  const angle = (15 * Math.PI) / 180;
+  const tiltedDir = new Vector3(Math.sin(angle), 0, -Math.cos(angle)).normalize();
+  const ptTilted = projectGazePoint(origin, tiltedDir, ball);
+  assert.ok(Math.abs(origin.distanceTo(ptTilted) - 12) < 1e-6, 'ring maintains ball depth on the gaze ray');
+  assert.ok(ptTilted.x > 3, 'ring moves in direction of eye movement');
+});
+
+test('eye ring tracker: visual reticle locks on and scales with distance', () => {
+  const mockWorld = { createTransformEntity: () => {} };
+  const tracker = new EyeRingTracker(mockWorld);
+  tracker.show();
+  assert.equal(tracker.visible, true);
+
+  const mockFocus = {
+    origin: new Vector3(0, 1.3, 0),
+    dir: new Vector3(0, 0, -1),
+    watching: true,
+  };
+  const ball = new Vector3(0, 1.3, -10);
+  const camera = new Object3D();
+  camera.position.set(0, 1.3, 0);
+
+  // Update while locked on
+  tracker.update(mockFocus, ball, true, true, camera, null, 1 / 60);
+  assert.ok(tracker.group.position.distanceTo(ball) < 1e-6, 'reticle is placed at the ball');
+  assert.equal(tracker.ringMaterial.color.getHex(), 0x5eead4, 'ring turns cyan-teal on lock');
+  assert.ok(tracker.group.scale.x > 0.4, 'ring scales proportionally at 10m');
+
+  // Update when eyes look away
+  mockFocus.watching = false;
+  mockFocus.dir.set(0.5, 0, -0.866).normalize();
+  tracker.update(mockFocus, ball, false, true, camera, null, 1 / 60);
+  assert.ok(tracker.group.position.distanceTo(ball) > 4, 'reticle moves away from ball with eye direction');
+  assert.equal(tracker.ringMaterial.color.getHex(), 0xffffff, 'ring dims to white when off target');
 });
