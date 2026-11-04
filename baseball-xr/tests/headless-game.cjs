@@ -12,7 +12,7 @@ const { chromium } = require('playwright');
 
 const PITCHES = Number(process.env.PITCHES || 25);
 const GAME_URL = process.env.GAME_URL || 'https://localhost:8082';
-const MAX_MPH = Math.round((28 + 1.2) * 2.23694) + 1;
+const MAX_MPH = Math.ceil(95 * 0.82 + (1.2 + 2.5) * 0.82); // the pro level's fastest four-seamer (src/pitches.js)
 
 (async () => {
   const browser = await chromium.launch({
@@ -26,7 +26,7 @@ const MAX_MPH = Math.round((28 + 1.2) * 2.23694) + 1;
 
   await page.goto(`${GAME_URL}/?pitches=${PITCHES}`);
   await page.waitForFunction(() => window.__game && window.__world, null, { timeout: 60000 });
-  await page.evaluate((n) => localStorage.removeItem('glove-up-best-' + n), PITCHES);
+  await page.evaluate((n) => localStorage.removeItem('glove-up-best-' + n + '-pro'), PITCHES);
   await page.evaluate(() => {
     window.IWER_DEVICE.primaryInputMode = 'hand';
     window.__world.launchXR();
@@ -107,23 +107,33 @@ const MAX_MPH = Math.round((28 + 1.2) * 2.23694) + 1;
     const rounds = [];
     // how: 'catch' (mitt to the ball), 'miss' (hands away), 'bare' (the bare hand to the ball)
     // look: 'ball' (head follows the ball) or 'away' (head turned to the sky)
-    const playRound = (how, look) => {
+    const playRound = (how, look, opts = {}) => {
       seed = 12345; // every round gets the same pitch sequence, whatever else used random numbers
       const flown = [];
       let cur = null;
+      let sign = null; // what the catcher called, and whether the pitcher nodded
       park();
       sys.lockout = 0; // skip the short pause after a round ends
       window.__game.start();
+      if (opts.from) sys.pitchNo = opts.from - 1; // start part-way through, fully ramped
       step(
         () => sys.state === 'over',
         () => {
           const p = sys.ball.position;
           if (look === 'ball') lookAt(sys.state === 'flying' ? p : new V(0, 1.4, -18));
           else lookAt(new V(0, 30, 2));
+          if (sys.state === 'sign') {
+            if (!sign) sign = { nod: false, shake: false, ring: false, msg: sys.hud.model.message, called: sys.calledAt.clone() };
+            if (sys.pitcher.gesture === 'nod') sign.nod = true;
+            if (sys.pitcher.gesture === 'shake') sign.shake = true;
+            if (sys.target.visible && sys.target.position.distanceTo(sys.calledAt) < 1e-6) sign.ring = true;
+            if (how === 'catch' && opts.target) placeGrip(sys.glove.side, sys.calledAt); // set the target
+          }
           if (sys.state === 'windup') {
             const hand = sys.pitcher.handPosition(new V());
             if (cur === null || cur.done) {
-              cur = { inHand: 0, frames: 0, ready: sys.pitcher.isPitching };
+              cur = { inHand: 0, frames: 0, ready: sys.pitcher.isPitching, sign, goodTarget: sys.goodTarget };
+              sign = null;
               flown.push(cur);
             }
             cur.frames++;
@@ -145,7 +155,7 @@ const MAX_MPH = Math.round((28 + 1.2) * 2.23694) + 1;
               const sn = Math.sqrt(Math.max(0, 1 - dq.w * dq.w));
               if (sn > 1e-4) {
                 const ax = new V(dq.x / sn, dq.y / sn, dq.z / sn).multiplyScalar(Math.sign(dq.w) || 1);
-                const want = new V(...sys.pitchType.spin.axis).normalize();
+                const want = sys.spinAxis;
                 cur.spinDot = Math.min(cur.spinDot === undefined ? 1 : cur.spinDot, ax.dot(want));
               }
             }
@@ -159,6 +169,12 @@ const MAX_MPH = Math.round((28 + 1.2) * 2.23694) + 1;
             const lineX = r[0] + (a[0] - r[0]) * k;
             cur.maxDrop = Math.max(cur.maxDrop, lineY - p.y);
             cur.maxSide = Math.max(cur.maxSide, Math.abs(p.x - lineX));
+            // Movement as Statcast measures it: against a ball with no spin, released the same way
+            // (only gravity). Signed: x + is the catcher's right, y + is up.
+            const t = sys.life;
+            const L = sys.launchFrom, U = sys.launchVel;
+            cur.moveX = p.x - (L.x + U.x * t);
+            cur.moveY = p.y - (L.y + U.y * t - 0.5 * 9.81 * t * t);
             // The hand waits where the pitch is going (as a catcher does), not on the ball itself.
             if (how === 'catch') placeGrip(sys.glove.side, sys.aim);
             if (how === 'bare') placeGrip(sys.glove.side === 'left' ? 'right' : 'left', sys.aim);
@@ -167,6 +183,9 @@ const MAX_MPH = Math.round((28 + 1.2) * 2.23694) + 1;
             cur.done = true;
             cur.result = sys.lastResult;
             cur.focus = sys.lastFocus;
+            cur.ump = sys.call_ ? { ...sys.call_ } : null;
+            cur.fromCall = sys.aim.distanceTo(cur.sign ? cur.sign.called : sys.aim);
+            cur.msg = sys.hud.model.message;
           }
         },
       );
@@ -177,14 +196,18 @@ const MAX_MPH = Math.round((28 + 1.2) * 2.23694) + 1;
         misses: sys.misses,
         pitchNo: sys.pitchNo,
         bestStreak: sys.bestStreak,
-        saved: Number(localStorage.getItem('glove-up-best-' + pitches)) || 0,
+        saved: Number(localStorage.getItem('glove-up-best-' + pitches + '-pro')) || 0,
         pitches: flown.map((b) => ({
           name: b.name, mph: b.mph, result: b.result, focus: b.focus === null ? null : +b.focus.toFixed(2),
           inHand: +b.inHand.toFixed(3), releaseY: b.release ? +b.release[1].toFixed(2) : null, releaseZ: b.release ? +b.release[2].toFixed(2) : null,
           drop: b.maxDrop !== undefined ? +b.maxDrop.toFixed(2) : null, side: b.maxSide !== undefined ? +b.maxSide.toFixed(2) : null,
           aimMiss: b.aimMiss === undefined ? null : +b.aimMiss.toFixed(4),
           spinDot: b.spinDot === undefined ? null : +b.spinDot.toFixed(3),
+          moveX: b.moveX === undefined ? null : +b.moveX.toFixed(3), moveY: b.moveY === undefined ? null : +b.moveY.toFixed(3),
+          signed: !!(b.sign && b.sign.nod && b.sign.ring && /Sign /.test(b.sign.msg)), shook: !!(b.sign && b.sign.shake),
+          ump: b.ump, fromCall: b.fromCall === undefined ? null : +b.fromCall.toFixed(3), msg: b.msg, goodTarget: b.goodTarget,
         })),
+        strikes: sys.strikes, framed: sys.framed, level: sys.level.id,
       });
     };
 
@@ -215,6 +238,12 @@ const MAX_MPH = Math.round((28 + 1.2) * 2.23694) + 1;
     park();
     for (let i = 0; i < 100; i++) sys.update(DT); // out of reach of the orb
     playRound('catch', 'ball'); // D: catching with the swapped hand
+
+    // E: the majors, fully ramped (pitch 19 on): real big-league speed, the mitt set on the target.
+    const proLevel = sys.level;
+    sys.level = window.__levels.find((l) => l.id === 'majors');
+    playRound('catch', 'ball', { from: 19, target: true });
+    sys.level = proLevel;
 
     // ---- contact: what counts as a catch in the mitt ----
     // Each scenario plays a round (the first `n` pitches) with the mitt placed every frame.
@@ -354,7 +383,7 @@ const MAX_MPH = Math.round((28 + 1.2) * 2.23694) + 1;
     return { mittShown, started, catches: sys.catches, misses: sys.misses, state: sys.state, focusMode: sys.focus.mode };
   });
 
-  const [A, B, C, D] = run.rounds;
+  const [A, B, C, D, E] = run.rounds;
   const K = run.contact;
   const M = run.mittShape;
   console.log('mitt', JSON.stringify(Object.fromEntries(Object.entries(M).map(([k, v]) => [k, +v.toFixed(3)]))));
@@ -370,7 +399,10 @@ const MAX_MPH = Math.round((28 + 1.2) * 2.23694) + 1;
     const a = run.rounds[1].pitches.filter((p) => p.name === name).map((p) => p[key]);
     return a.length ? +(a.reduce((x, y) => x + y, 0) / a.length).toFixed(2) : null;
   };
-  console.log('break vs straight line (m), drop / side:', ['Fastball', 'Changeup', 'Curveball', 'Slider'].map((n) => `${n} ${avg(n, 'drop')} / ${avg(n, 'side')}`).join(', '));
+  const ALL = ['Four-seam fastball', 'Sinker', 'Changeup', 'Cutter', 'Curveball', 'Slider', 'Splitter', 'Sweeper', 'Knuckle curve', 'Screwball', 'Knuckleball', 'Eephus'];
+  console.log('movement vs a spinless ball (inches; x + catcher\'s right, y + up):', ALL.map((n) => `${n} ${Math.round(avg(n, 'moveX') / 0.0254)} / ${Math.round(avg(n, 'moveY') / 0.0254)}`).join(', '));
+  console.log('majors round mph:', E.pitches.map((p) => `${p.name} ${p.mph}`).join(', '));
+  console.log('umpire (round A):', A.strikes, 'strikes,', A.framed, 'framed; messages:', A.pitches.slice(0, 4).map((p) => p.msg).join(' / '));
   console.log('swap', run.before, '->', run.after, 'restarted state', run.restarted);
   console.log('errors:', errors.length ? errors.slice(0, 5) : 'none');
 
@@ -378,7 +410,7 @@ const MAX_MPH = Math.round((28 + 1.2) * 2.23694) + 1;
   const names = new Set(log.map((p) => p.name));
   const byName = (n) => log.filter((p) => p.name === n);
   const mean = (a) => a.reduce((x, y) => x + y, 0) / Math.max(1, a.length);
-  const fastballs = byName('Fastball');
+  const fastballs = byName('Four-seam fastball');
   const fastMph = fastballs.map((p) => p.mph);
   const firstFast = fastMph.slice(0, 3), lastFast = fastMph.slice(-3);
   const checks = {
@@ -386,9 +418,15 @@ const MAX_MPH = Math.round((28 + 1.2) * 2.23694) + 1;
     'restart by touching the green ball': run.restarted !== 'over',
     [`B: hands away, every pitch missed (${PITCHES}/${PITCHES})`]: B.catches === 0 && B.misses === PITCHES,
     'C: the bare hand never catches ("use the mitt")': C.catches === 0 && C.pitches.every((p) => p.result === 'bare'),
-    'all four pitch types are thrown': PITCHES < 14 || ['Fastball', 'Changeup', 'Curveball', 'Slider'].every((n) => names.has(n)),
-    'curveball drops more than the fastball': PITCHES < 9 || mean(byName('Curveball').map((p) => p.drop)) > mean(fastballs.map((p) => p.drop)) + 0.1,
-    'slider breaks sideways more than the fastball': PITCHES < 14 || mean(byName('Slider').map((p) => p.side)) > mean(fastballs.map((p) => p.side)) + 0.1,
+    'the whole arsenal is thrown (all 12 pitch types)': PITCHES < 23 || ALL.every((n) => names.has(n)),
+    'curveball drops (and the four-seamer rides) by real inches': PITCHES < 9 || (mean(byName('Curveball').map((p) => p.moveY)) < -0.12 && mean(fastballs.map((p) => p.moveY)) > 0.2),
+    'sweeper sweeps glove side (catcher\'s right), sinker runs arm side (left)': PITCHES < 15 || (mean(byName('Sweeper').map((p) => p.moveX)) > 0.2 && mean(byName('Sinker').map((p) => p.moveX)) < -0.15 && mean(byName('Changeup').map((p) => p.moveX)) < -0.1),
+    'battery: every pitch is signed, he nods, and the gold ring marks the called spot': [A, B, C, D, E].every((r) => r.pitches.every((p) => p.signed)),
+    'battery: he shakes off a sign now and then': [A, B, C, D].some((r) => r.pitches.some((p) => p.shook)),
+    'battery: each pitch crosses near the called spot (his command), never out of reach': log.every((p) => p.fromCall !== null && p.fromCall < 0.5),
+    'battery: the umpire calls every pitch, strikes and balls, and says so': A.pitches.every((p) => p.ump && /STRIKE|Ball/.test(p.msg)) && A.strikes > 5 && A.strikes < PITCHES,
+    'battery: a good target (mitt on the ring) is noticed': E.pitches.every((p) => p.goodTarget) && A.pitches.some((p) => !p.goodTarget),
+    'majors: real big-league speed (a 92+ mph four-seamer) and every pitch still caught': E.catches === E.pitches.length && E.pitches.some((p) => p.name === 'Four-seam fastball' && p.mph >= 92) && E.pitches.every((p) => p.mph <= 100),
     'fastball speed ramps up over the round': lastFast.length > 0 && mean(lastFast) > mean(firstFast) + 5,
     'speed stays at or under the cap': log.every((p) => p.mph <= MAX_MPH),
     'every pitch, breaking or not, crosses exactly where it was aimed (within 1 cm)': log.every((p) => p.aimMiss !== null && p.aimMiss < 0.01),

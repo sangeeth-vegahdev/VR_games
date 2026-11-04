@@ -6,10 +6,9 @@ const pitchesOverride = Number(params.get('pitches'));
 export const CFG = {
   // A round is 25 pitches. `?pitches=N` in the URL overrides it (handy for quick tests).
   pitches: Number.isInteger(pitchesOverride) && pitchesOverride > 0 ? pitchesOverride : 25,
-  rampPitches: 18, // speed and movement climb over this many pitches, then hold
-  startSpeed: 15, // m/s for pitch 1 (34 mph): an easy lob to learn the glove
-  maxSpeed: 28, // m/s once fully ramped (63 mph): quick in VR, but readable
-  speedJitter: 1.2,
+  rampPitches: 18, // speed and movement climb over this many pitches, then hold (see src/pitches.js)
+  // How hard he throws: rookie, pro or majors (real big-league speed). `?level=` overrides it.
+  level: ['rookie', 'pro', 'majors'].includes(params.get('level')) ? params.get('level') : 'pro',
   gravity: 9.81, // real gravity: a baseball drops visibly over 18 m
   // A catch is the ball's centre arriving within catchRadius of the pocket's centre: inside the mitt's
   // face (about 28 cm across its binding), coming in from the front. Swept between frames, with the mitt.
@@ -19,14 +18,15 @@ export const CFG = {
   nearMiss: 0.4, // a miss closer than this tells you by how much
   bareHandRadius: 0.1, // ball centre to the bare palm (ball radius plus the hand): "use the mitt"
   arriveZ: -0.55, // where pitches cross the catcher's reach, in front of the body
-  zoneHalfWidth: 0.3, // pitches arrive within this much left/right of centre...
-  zoneHalfHeight: 0.22, // ...and up/down around the target height
-  targetBelowHead: 0.35, // target height is measured from the headset, so it suits seated players
-  readyDelay: 1.0,
+  targetBelowHead: 0.35, // the zone's centre is measured from the headset, so it suits seated players
+  readyDelay: 0.6,
+  signTime: 1.1, // the sign goes in, he nods, comes set
+  shakeTime: 0.9, // ...or shakes one off first
+  shakeChance: 0.15,
+  goodTarget: 0.12, // the mitt within this of the called spot as he comes set: a good target
   feedbackDelay: 1.1,
   restartLockout: 1.0,
-  zoneHint: true, // a strike-zone frame marks where the pitch will cross, early in the round
-  zoneHintPitches: 8, // ...for this many pitches, then the player is on their own
+  zoneHint: true, // a faint strike-zone frame, and a ring on the called spot
   maxLife: 4, // safety net for a ball that never resolves
   missZ: 0.25, // a ball past this z (behind the glove) is missed
   // Eyes on the ball: how close (degrees) the gaze must stay to the ball to count as watching it.
@@ -48,16 +48,6 @@ export const START_RADIUS = 0.2;
 export const SWAP_POS = { x: 0.4, y: 0.86, z: -0.45 }; // a small orb that swaps the glove hand
 export const SWAP_RADIUS = 0.12;
 
-// The pitches, unlocked as the round goes on. `break` is an extra steady acceleration (m/s^2):
-// x is to the catcher's right (+), y is up. A right-hander's curveball dives down and away from a
-// right-handed batter (to the catcher's left), the slider slides the same way flatter and later.
-// `spin` is the ball's spin axis (world, the ball flying towards +Z) and how fast it is drawn turning
-// (turns a second; slowed from the real 20 to 40, which would only flicker). Each axis is the one
-// whose Magnus force (spin x velocity) gives that pitch its movement: backspin lifts the fastball,
-// topspin dives the curve, side spin slides the slider, and the changeup fades.
-export const PITCHES = [
-  { name: 'Fastball', from: 1, speed: 1.0, break: [0, 3.2], spin: { axis: [-1, 0, 0], rps: 14 } }, // backspin lift
-  { name: 'Changeup', from: 5, speed: 0.8, break: [0.9, -0.6], spin: { axis: [-0.55, 0.83, 0], rps: 9 } }, // fading arm side
-  { name: 'Curveball', from: 9, speed: 0.74, break: [-2.4, -7.5], spin: { axis: [0.95, -0.3, 0], rps: 12 } }, // the 12-to-6 dive
-  { name: 'Slider', from: 14, speed: 0.86, break: [-6.5, -2.2], spin: { axis: [0.25, -0.75, 0.6], rps: 13 } }, // side spin, partly bullet
-];
+// The pitches (speeds, movement, spin, the calls) live in src/pitches.js.
+export { PITCHES } from './pitches.js';
+export const LEVEL_POS = { x: -0.4, y: 0.86, z: -0.45 }; // and one that changes how hard he throws

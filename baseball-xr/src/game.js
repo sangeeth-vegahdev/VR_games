@@ -10,13 +10,18 @@ import {
   Quaternion,
   SphereGeometry,
   SRGBColorSpace,
+  TorusGeometry,
   Vector3,
   VisibilityState,
 } from '@iwsdk/core';
 import { BALL_RADIUS, makeBall, setFocusGlow, setGlowForDistance } from './ball.js';
 import { catchSpot } from './glove.js';
 import { buildBallpark } from './ballpark.js';
-import { CFG, DEFAULT_GLOVE, PITCHES, START_POS, START_RADIUS, SWAP_POS, SWAP_RADIUS } from './config.js';
+import { CFG, DEFAULT_GLOVE, LEVEL_POS, START_POS, START_RADIUS, SWAP_POS, SWAP_RADIUS } from './config.js';
+import {
+  breakAccel, callOffset, callWords, chooseCall, choosePitch, clampToReach, commandMiss, drawnRps, flutterAt,
+  flutterParams, LEVELS, levelById, MPH, PITCHES, pitchSpeed, spinAxis, STRIKE_ZONE, umpire,
+} from './pitches.js';
 import { DesktopPointer } from './desktop-pointer.js';
 import { Effects, Sound } from './fx.js';
 import { FocusTracker } from './gaze.js';
@@ -25,21 +30,18 @@ import { COLORS, Hud } from './hud.js';
 import { Pitcher } from './pitcher.js';
 import { bareHand, PlayerGlove } from './player-glove.js';
 
-const lerp = (a, b, t) => a + (b - a) * t;
-const MPH = 2.23694;
-
-// Best score is remembered per round length. Storage can be blocked, so it is always optional.
-const bestKey = () => `glove-up-best-${CFG.pitches}`;
-function loadBest() {
+// Best score is remembered per round length and level. Storage can be blocked, so it is optional.
+const bestKey = (level) => `glove-up-best-${CFG.pitches}-${level}`;
+function loadBest(level) {
   try {
-    return Number(localStorage.getItem(bestKey())) || 0;
+    return Number(localStorage.getItem(bestKey(level))) || 0;
   } catch (e) {
     return 0;
   }
 }
-function saveBest(value) {
+function saveBest(level, value) {
   try {
-    localStorage.setItem(bestKey(), String(value));
+    localStorage.setItem(bestKey(level), String(value));
   } catch (e) {
     /* not saved: fine */
   }
@@ -108,11 +110,29 @@ export class GameSystem extends createSystem({}) {
     this.swapOrb.position.set(SWAP_POS.x, SWAP_POS.y, SWAP_POS.z);
     this.world.createTransformEntity(this.swapOrb);
 
-    // Strike-zone frame where the pitch will cross, for the first pitches of a round.
+    // An orb that changes how hard he throws (rookie, pro, majors).
+    this.levelOrb = new Group();
+    const lorb = new Mesh(new SphereGeometry(SWAP_RADIUS * 0.5, 20, 14), new MeshStandardMaterial({ color: 0x3a8dde, emissive: 0x0d3a6b, emissiveIntensity: 1 }));
+    this.levelLabel = label('', 0.36, 0.07);
+    this.levelLabel.position.set(0, -0.11, 0);
+    this.levelOrb.add(lorb, this.levelLabel);
+    this.levelOrb.position.set(LEVEL_POS.x, LEVEL_POS.y, LEVEL_POS.z);
+    this.world.createTransformEntity(this.levelOrb);
+
+    // The catcher's target: a ring on the called spot, from the sign until the ball arrives.
+    this.target = new Mesh(
+      new TorusGeometry(0.075, 0.006, 8, 40),
+      new MeshBasicMaterial({ color: 0xffd166, transparent: true, opacity: 0.75, depthWrite: false }),
+    );
+    this.target.visible = false;
+    this.target.renderOrder = 6;
+    this.world.createTransformEntity(this.target);
+
+    // A faint frame of the strike zone (the plate's width, the ball's radius either side).
     this.zone = new Group();
-    const zoneMat = new MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.45, depthWrite: false, side: DoubleSide });
-    const ZW = 0.36;
-    const ZH = 0.32;
+    const zoneMat = new MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.22, depthWrite: false, side: DoubleSide });
+    const ZW = STRIKE_ZONE.halfWidth * 2;
+    const ZH = STRIKE_ZONE.halfHeight * 2;
     for (const [w, h, x, y] of [
       [ZW, 0.012, 0, ZH / 2],
       [ZW, 0.012, 0, -ZH / 2],
@@ -153,6 +173,23 @@ export class GameSystem extends createSystem({}) {
     this.restAt = new Vector3();
     this.restLocal = new Vector3(); // where the caught ball rests, in the mitt's own space
     this.spinAxis = new Vector3(1, 0, 0);
+    this.spinRps = 0;
+    this.ramp = 0;
+    this.zoneCenter = new Vector3(0, 0.9, CFG.arriveZ);
+    this.calledAt = new Vector3(); // the spot the catcher called (world)
+    this.offset = { x: 0, y: 0 }; // where it really crosses, from the zone's centre
+    this.miss = { x: 0, y: 0 };
+    this.flutter = { ax: 0, ay: 0, wx: 0, wy: 0, px: 0, py: 0 };
+    this.wobble = { x: 0, y: 0 };
+    this.flightT = 1;
+    this.mittSpeed = 0;
+    this.call = 'middle';
+    this.shakeOff = null; // the pitch he shakes off, before the one he throws
+    this.goodTarget = false;
+    this.call_ = null; // the umpire's call on the last pitch: { strike, framed, stabbed }
+    this.strikes = 0;
+    this.framed = 0;
+    this.level = levelById(CFG.level);
     this.spinQ = new Quaternion();
     this.spot = null; // pocket | web | heel | edge
     this.settle = 0;
@@ -178,7 +215,7 @@ export class GameSystem extends createSystem({}) {
     this.lastFocus = null;
     this.lastResult = null;
     this.reaction = null;
-    this.best = loadBest();
+    this.best = loadBest(this.level.id);
     this.paused = false;
 
     this.showTitle();
@@ -187,6 +224,7 @@ export class GameSystem extends createSystem({}) {
       this.sound.unlock();
       if (e.code === 'Space' || e.code === 'Enter') this.tryStart();
       if (e.code === 'KeyG') this.trySwap(true);
+      if (e.code === 'KeyL') this.tryLevel(true);
     };
     const onPointer = () => this.sound.unlock();
     window.addEventListener('keydown', onKey);
@@ -203,6 +241,7 @@ export class GameSystem extends createSystem({}) {
     );
 
     // Read-only view for the headless test.
+    window.__levels = LEVELS;
     window.__game = {
       get state() { return this.sys.state; },
       get pitchNo() { return this.sys.pitchNo; },
@@ -210,6 +249,10 @@ export class GameSystem extends createSystem({}) {
       get misses() { return this.sys.misses; },
       get mph() { return this.sys.mph; },
       get pitchName() { return this.sys.pitchType.name; },
+      get level() { return this.sys.level.id; },
+      get call() { return this.sys.call; },
+      get umpire() { return this.sys.call_; },
+      get strikes() { return this.sys.strikes; },
       get aim() { return this.sys.aim; },
       get ballPos() { return this.sys.ball.position; },
       get gloveSide() { return this.sys.glove.side; },
@@ -236,10 +279,25 @@ export class GameSystem extends createSystem({}) {
     const inHeadset = this.inHeadset();
     const lines = [{ text: `Catch ${CFG.pitches} pitches with your mitt`, color: COLORS.ink }];
     lines.push({ text: 'Keep your eyes on the ball, all the way in' });
-    if (this.best) lines.push({ text: `Your best: ${this.best} / ${CFG.pitches}`, color: COLORS.good });
+    lines.push({ text: 'Set your mitt on the gold ring: that is your target' });
+    if (this.best) lines.push({ text: `Your best (${this.level.name}): ${this.best} / ${CFG.pitches}`, color: COLORS.good });
+    lines.push({ text: inHeadset ? `${this.level.name} speed: touch the blue ball to change` : `${this.level.name} speed (L changes it)` });
     lines.push({ text: inHeadset ? `Mitt on your ${this.glove.side} hand: touch the gold ball to swap` : 'On a PC, move the mouse to catch. G swaps hands' });
     this.hud.showCard('Glove Up', lines, inHeadset ? 'Touch the green ball to start' : 'Touch the green ball, or press Space');
     this.swapLabel.userData.draw(`Mitt: ${this.glove.side} hand`);
+    this.levelLabel.userData.draw(`Speed: ${this.level.name}`);
+  }
+
+  tryLevel(force = false) {
+    if (this.state !== 'idle' && this.state !== 'over') return;
+    if (!force && this.swapLockout > 0) return;
+    const i = LEVELS.indexOf(this.level);
+    this.level = LEVELS[(i + 1) % LEVELS.length];
+    this.best = loadBest(this.level.id);
+    this.swapLockout = 1.2;
+    this.sound.start();
+    if (this.state === 'idle') this.showTitle();
+    else this.levelLabel.userData.draw(`Speed: ${this.level.name}`);
   }
 
   tryStart() {
@@ -272,6 +330,11 @@ export class GameSystem extends createSystem({}) {
     this.zone.visible = false;
     this.marker.visible = false;
     this.swapOrb.visible = false;
+    this.levelOrb.visible = false;
+    this.target.visible = false;
+    this.strikes = 0;
+    this.framed = 0;
+    this.call_ = null;
     this.fx.clearTrail();
     this.hud.hideCard();
     this.hud.set({ catches: 0, misses: 0, pitchNo: 0, mph: 0, pitchName: '', focus: null });
@@ -282,28 +345,67 @@ export class GameSystem extends createSystem({}) {
     this.message('Play ball!', COLORS.ink, CFG.readyDelay);
   }
 
-  beginPitch() {
+  // The catcher puts the sign down: the pitch and the spot. He nods (or shakes one off first, and
+  // then nods), and the gold ring marks the spot for the catcher's mitt.
+  callPitch() {
     this.pitchNo++;
-    const ramp = Math.min(1, (this.pitchNo - 1) / CFG.rampPitches);
-    // Which pitch: fastballs most often, the others as they unlock.
-    const open = PITCHES.filter((p) => p.from <= this.pitchNo);
-    this.pitchType = open.length > 1 && Math.random() > 0.4 ? open[1 + Math.floor(Math.random() * (open.length - 1))] : open[0];
-    let speed = lerp(CFG.startSpeed, CFG.maxSpeed, ramp);
-    if (ramp >= 1) speed += (Math.random() * 2 - 1) * CFG.speedJitter;
-    this.speed = speed * this.pitchType.speed;
-    this.mph = Math.round(this.speed * MPH);
-    // Movement grows over the round: gentle early on, full later.
-    const k = 0.45 + 0.55 * ramp;
-    this.accel.set(this.pitchType.break[0] * k, this.pitchType.break[1] * k - CFG.gravity, 0);
-
-    // Where it will cross: around the catcher's chest, measured from the headset (so it suits a
-    // seated player as well as a standing one).
+    const rand = Math.random;
+    this.pitchType = choosePitch(this.pitchNo, rand);
+    this.call = chooseCall(this.pitchType, rand);
+    this.shakeOff = null;
+    if (this.pitchNo > 3 && this.pitchType.from !== this.pitchNo && rand() < CFG.shakeChance) {
+      this.shakeOff = choosePitch(this.pitchNo, rand, this.pitchType);
+      if (this.shakeOff === this.pitchType) this.shakeOff = null;
+    }
+    // The zone sits round the catcher's chest, measured from the headset (seated or standing).
     (this.inHeadset() ? this.player.head : this.world.camera).getWorldPosition(this.head);
-    this.aim.set(
-      (Math.random() * 2 - 1) * CFG.zoneHalfWidth,
-      Math.max(0.45, this.head.y - CFG.targetBelowHead + (Math.random() * 2 - 1) * CFG.zoneHalfHeight),
-      CFG.arriveZ,
-    );
+    this.zoneCenter.set(0, Math.max(0.7, this.head.y - CFG.targetBelowHead), CFG.arriveZ);
+    callOffset(this.call, this.offset);
+    this.calledAt.set(this.zoneCenter.x + this.offset.x, this.zoneCenter.y + this.offset.y, CFG.arriveZ);
+    this.target.position.copy(this.calledAt);
+    this.target.visible = CFG.zoneHint;
+    this.zone.position.copy(this.zoneCenter);
+    this.zone.visible = CFG.zoneHint;
+    const first = this.shakeOff || this.pitchType;
+    this.showSign(first);
+    this.pitcher.signal(this.shakeOff ? 'shake' : 'nod');
+    this.state = 'sign';
+    this.timer = CFG.signTime + (this.shakeOff ? CFG.shakeTime : 0);
+    this.hud.set({ pitchNo: this.pitchNo, pitchName: '', mph: 0 });
+  }
+
+  showSign(p) {
+    const isNew = p.from === this.pitchNo && this.pitchNo > 1;
+    const text = `${isNew ? 'New pitch!  ' : ''}Sign ${p.sign}:  ${p.short}, ${callWords(this.call)}`;
+    this.message(text, '#ffd166', CFG.signTime + CFG.shakeTime);
+  }
+
+  updateSign(dt) {
+    this.timer -= dt;
+    // Shaken off: the next sign goes down, and this time he nods.
+    if (this.shakeOff && this.timer <= CFG.signTime) {
+      this.message(`Shaken off. Sign ${this.pitchType.sign}:  ${this.pitchType.short}, ${callWords(this.call)}`, '#ffd166', CFG.signTime);
+      this.pitcher.signal('nod');
+      this.shakeOff = null;
+    }
+    if (this.timer <= 0) this.beginPitch();
+  }
+
+  // He comes set and delivers. Where it really goes: the called spot plus his miss (tighter when the
+  // catcher gives him a good target), never out of the catcher's reach.
+  beginPitch() {
+    const ramp = Math.min(1, (this.pitchNo - 1) / CFG.rampPitches);
+    const rand = Math.random;
+    this.ramp = ramp;
+    this.speed = pitchSpeed(this.pitchType, this.level, ramp, rand);
+    this.mph = Math.round(this.speed * MPH);
+    this.goodTarget = this.glove.ok && this.glove.pocket.distanceTo(this.calledAt) < CFG.goodTarget;
+    commandMiss(this.pitchType, rand, this.goodTarget, this.miss);
+    this.offset.x += this.miss.x;
+    this.offset.y += this.miss.y;
+    clampToReach(this.offset);
+    this.aim.set(this.zoneCenter.x + this.offset.x, this.zoneCenter.y + this.offset.y, CFG.arriveZ);
+    if (this.pitchType.flutter) flutterParams(this.pitchType, rand, this.flutter);
 
     this.pitcher.pitch();
     this.ball.scale.setScalar(this.pitcher.ballScale);
@@ -314,7 +416,7 @@ export class GameSystem extends createSystem({}) {
     this.fx.clearTrail();
     this.focus.resetPitch();
     this.state = 'windup';
-    this.hud.set({ pitchNo: this.pitchNo, pitchName: '', message: '' });
+    this.hud.set({ pitchNo: this.pitchNo, pitchName: '' });
   }
 
   // Release: the ball leaves his fingers. The path is solved so that gravity and the pitch's
@@ -323,20 +425,33 @@ export class GameSystem extends createSystem({}) {
     const from = this.prev.copy(this.pitcher.ballPos);
     this.pitcher.releaseBall();
     const T = from.distanceTo(this.aim) / this.speed;
+    this.flightT = T;
+    // The movement grows over the round: gentle early on, its full real size later.
+    breakAccel(this.pitchType, T, 0.45 + 0.55 * this.ramp, this.tmp);
+    this.accel.set(this.tmp.x, this.tmp.y - CFG.gravity, 0);
     this.vel.subVectors(this.aim, from).divideScalar(T).addScaledVector(this.accel, -0.5 * T);
     this.launchFrom.copy(from);
     this.launchVel.copy(this.vel);
     this.ball.position.copy(from);
     this.ball.rotation.set(Math.random() * 6, Math.random() * 6, 0);
-    const sp = this.pitchType.spin;
-    this.spinAxis.set(sp.axis[0], sp.axis[1], sp.axis[2]).normalize();
+    spinAxis(this.pitchType, this.spinAxis);
+    this.spinRps = drawnRps(this.pitchType);
     this.life = 0;
-    this.zone.position.copy(this.aim);
     this.nearest = Infinity;
     this.prevBareOk = false;
     this.sound.whoosh();
     this.state = 'flying';
-    this.hud.set({ pitchName: this.pitchType.name, mph: this.mph });
+    this.hud.set({ pitchName: this.pitchType.short, mph: this.mph });
+  }
+
+  // The umpire's call, once the pitch is caught or past.
+  callIt(caught) {
+    this.call_ = umpire(this.offset, caught, this.mittSpeed);
+    if (this.call_.strike) this.strikes++;
+    if (this.call_.framed) this.framed++;
+    this.target.visible = false;
+    const c = this.call_;
+    return c.framed ? 'Framed: STRIKE' : c.stabbed ? 'Stabbed it: Ball' : c.strike ? 'STRIKE' : 'Ball';
   }
 
   // The ball has met the pocket, at its current position: it settles in from there, and the
@@ -360,8 +475,10 @@ export class GameSystem extends createSystem({}) {
     this.streak++;
     this.bestStreak = Math.max(this.bestStreak, this.streak);
     this.zone.visible = false;
+    const ump = this.callIt(true);
     this.fx.burst(this.ball.position); // at the point of contact
-    this.sound.caught(this.streak, this.spot === 'pocket' ? 1 : this.spot === 'web' ? 0.55 : 0.7);
+    // The pop: deeper in the pocket, and louder the harder it was thrown (a 95 mph four-seamer cracks).
+    this.sound.caught(this.streak, (this.spot === 'pocket' ? 1 : this.spot === 'web' ? 0.55 : 0.7) * Math.min(1.25, 0.6 + this.speed / 70));
     this.reaction = 'cheer';
     this.lastResult = 'caught';
     this.endFocus();
@@ -369,8 +486,7 @@ export class GameSystem extends createSystem({}) {
     const where = { pocket: 'Right in the pocket', web: 'In the web', heel: 'Off the heel', edge: 'On the edge' }[this.spot];
     let msg = this.spot === 'pocket' ? 'POP!  Right in the pocket' : `CAUGHT!  ${where}`;
     if (this.streak >= 3) msg = `${this.spot === 'pocket' ? 'POP!' : 'CAUGHT!'}  ${this.streak} in a row`;
-    else if (this.pitchType.name !== 'Fastball' && this.spot === 'pocket') msg = `${this.pitchType.name}: right in the pocket`;
-    this.message(msg, COLORS.good, CFG.feedbackDelay);
+    this.message(`${msg}  |  ${ump}`, COLORS.good, CFG.feedbackDelay);
   }
 
   missed(why) {
@@ -380,6 +496,7 @@ export class GameSystem extends createSystem({}) {
     this.misses++;
     this.streak = 0;
     this.zone.visible = false;
+    const ump = this.callIt(false);
     this.sound.missed();
     this.reaction = 'shrug';
     this.lastResult = why;
@@ -390,7 +507,8 @@ export class GameSystem extends createSystem({}) {
     else if (why === 'back') msg = 'Off the back of the mitt';
     else if (this.nearest < CFG.nearMiss) msg = `Just missed: ${Math.max(1, Math.round(this.nearest * 100))} cm`;
     else if (this.lastFocus !== null && this.focus.lostAt !== null) msg = `Eyes left it at ${Math.max(1, Math.round(this.focus.lostAt))} m`;
-    this.message(msg, COLORS.bad, CFG.feedbackDelay);
+    if (why === 'missed' && this.pitchType.flutter) msg += '  (it danced)';
+    this.message(why === 'missed' ? `${msg}  |  ${ump}` : msg, COLORS.bad, CFG.feedbackDelay);
     if (why === 'bare') {
       // Knocked away off the bare hand.
       this.vel.set(this.vel.x * 0.3 + (Math.random() - 0.5) * 3, 2.5, -Math.abs(this.vel.z) * 0.25);
@@ -430,13 +548,15 @@ export class GameSystem extends createSystem({}) {
     this.lockout = CFG.restartLockout;
     this.marker.visible = true;
     this.swapOrb.visible = this.inHeadset();
+    this.levelOrb.visible = this.inHeadset();
+    this.target.visible = false;
     const ratio = this.catches / CFG.pitches;
     const rating =
       ratio >= 0.95 ? 'Gold Glove!' : ratio >= 0.8 ? 'All-Star hands!' : ratio >= 0.5 ? 'Solid catching' : 'Keep working the mitt';
     const record = this.catches > this.best;
     if (record) {
       this.best = this.catches;
-      saveBest(this.best);
+      saveBest(this.level.id, this.best);
     }
     this.hud.set({ message: '' });
     const lines = [
@@ -448,6 +568,7 @@ export class GameSystem extends createSystem({}) {
       const how = this.focus.mode === 'eyes' ? 'eye tracking' : 'head direction';
       lines.push({ text: `Eyes on the ball  ${pct}%  (${how})` });
     }
+    lines.push({ text: `Strikes called ${this.strikes}${this.framed ? `  (${this.framed} framed)` : ''}   |   ${this.level.name}` });
     lines.push({ text: `Best streak ${this.bestStreak}   |   Best ${this.best}` });
     this.hud.showCard('Round over', lines, 'Touch the green ball to play again');
     this.sound.over();
@@ -495,7 +616,10 @@ export class GameSystem extends createSystem({}) {
         break;
       case 'ready':
         this.timer -= dt;
-        if (this.timer <= 0 && this.pitcher.isSet && !this.reaction) this.beginPitch();
+        if (this.timer <= 0 && this.pitcher.isSet && !this.reaction) this.callPitch();
+        break;
+      case 'sign':
+        this.updateSign(dt);
         break;
       case 'windup':
         this.ball.position.copy(this.pitcher.ballPos);
@@ -521,6 +645,7 @@ export class GameSystem extends createSystem({}) {
   // Touch the green ball (with either hand or the mitt) to start; the gold orb swaps hands.
   updateMenu() {
     this.swapOrb.visible = this.inHeadset();
+    this.levelOrb.visible = this.inHeadset();
     const points = this.menuPoints;
     points.length = 0;
     if (this.glove.ok) points.push(this.glove.pocket);
@@ -542,6 +667,10 @@ export class GameSystem extends createSystem({}) {
           this.trySwap();
           return;
         }
+        if (p.distanceTo(this.levelOrb.position) < SWAP_RADIUS) {
+          this.tryLevel();
+          return;
+        }
       }
     }
   }
@@ -552,9 +681,15 @@ export class GameSystem extends createSystem({}) {
     this.prev.copy(this.ball.position);
     const t = this.life + dt;
     this.ball.position.copy(this.launchFrom).addScaledVector(this.launchVel, t).addScaledVector(this.accel, 0.5 * t * t);
+    if (this.pitchType.flutter) {
+      // A knuckleball dances late, and is back on line where it crosses.
+      flutterAt(this.flutter, Math.min(t, this.flightT), this.flightT, this.wobble);
+      this.ball.position.x += this.wobble.x;
+      this.ball.position.y += this.wobble.y;
+    }
     this.vel.copy(this.launchVel).addScaledVector(this.accel, t);
-    // The seams spin about the pitch's own axis (backspin, topspin, side spin).
-    this.ball.quaternion.premultiply(this.spinQ.setFromAxisAngle(this.spinAxis, this.pitchType.spin.rps * Math.PI * 2 * dt));
+    // The seams spin about the pitch's own axis (backspin, topspin, side spin, bullet spin).
+    this.ball.quaternion.premultiply(this.spinQ.setFromAxisAngle(this.spinAxis, this.spinRps * Math.PI * 2 * dt));
     // Real size in his hand, growing to the game's catchable size as it leaves.
     this.ball.scale.setScalar(Math.min(1, this.pitcher.ballScale + this.life * 1.5));
     const dist = this.ball.position.distanceTo(this.head.set(0, this.aim.y, 0));
@@ -563,11 +698,15 @@ export class GameSystem extends createSystem({}) {
     this.fx.trailPoint(this.ball.position, dt);
     this.focus.track(this.ball.position, dt, dist);
     setFocusGlow(this.ball, this.focus.watching);
-    this.zone.visible = CFG.zoneHint && this.pitchNo <= CFG.zoneHintPitches;
 
     // Contact with the mitt: swept between frames, relative to the mitt, so neither a fast pitch nor
     // a fast mitt can pass through the other between two frames.
     const g = this.glove;
+    // How fast the mitt is moving as the ball arrives: quiet hands frame a pitch, a stab loses it.
+    if (g.ok && g.prevOk && dt > 0) {
+      const v = g.pocket.distanceTo(g.prevPocket) / dt;
+      this.mittSpeed = v < 30 ? v : this.mittSpeed;
+    } else this.mittSpeed = 0;
     if (g.ok) {
       const d = this.sweep(g.prevOk ? g.prevPocket : g.pocket, g.pocket);
       this.nearest = Math.min(this.nearest, Math.max(0, d - CFG.catchRadius));
