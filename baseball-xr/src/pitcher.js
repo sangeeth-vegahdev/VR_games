@@ -211,6 +211,9 @@ export class Pitcher {
     this.time = 0;
     this.held = 'none'; // none | hand
     this.shake = 0;
+    this.gesture = null; // 'nod' (takes the sign) | 'shake' (shakes it off), while set
+    this.gestureTime = 0;
+    this.nodAngle = 0;
     this.atSet = true;
     poseFrom(SET, this.pose);
     this.apply(0);
@@ -294,6 +297,12 @@ export class Pitcher {
     this.start(RECOVER);
   }
 
+  // Answering the catcher's sign from the set position: a nod, or a shake of the head.
+  signal(kind) {
+    this.gesture = kind;
+    this.gestureTime = 0;
+  }
+
   cheer() {
     this.start(CHEER);
   }
@@ -348,6 +357,15 @@ export class Pitcher {
       }
     }
     this.shake = this.move && this.move.shake ? Math.sin(this.time * 18) * 0.3 * Math.sin(Math.PI * Math.min(1, this.time)) : 0;
+    this.nodAngle = 0;
+    if (this.gesture) {
+      const t = (this.gestureTime += dt);
+      const len = this.gesture === 'nod' ? 0.75 : 0.8;
+      const env = Math.sin(Math.PI * Math.min(1, t / len));
+      if (this.gesture === 'nod') this.nodAngle = 0.24 * env * Math.max(0, Math.sin(t * 2 * Math.PI * 2.6));
+      else this.shake += Math.sin(t * 17) * 0.32 * env;
+      if (t >= len) this.gesture = null;
+    }
     this.apply(dt);
   }
 
@@ -406,6 +424,12 @@ export class Pitcher {
     const up = this.v[3].set(0, 1, 0);
     this.rotateWorld(this.bones.neck, up, yaw * 0.45);
     this.rotateWorld(head, up, yaw * 0.55);
+    if (this.nodAngle) {
+      // Chin down and back up, about the shoulders' left-right line.
+      const right = this.v[4].set(fwd.z, 0, -fwd.x); // positive turns the face down
+      this.rotateWorld(this.bones.neck, right, this.nodAngle * 0.4);
+      this.rotateWorld(head, right, this.nodAngle * 0.6);
+    }
   }
 
   // Elbows bend out to the side and down: -1 right arm, +1 left.

@@ -39,6 +39,11 @@ class Panel {
   text(value, x, y, size, color = '#ffffff', weight = 700, align = 'center', maxWidth = null) {
     const { ctx } = this;
     ctx.font = `${weight} ${size}px system-ui, sans-serif`;
+    if (maxWidth) {
+      // A long line gets a smaller font (down to 60%) before it is squeezed.
+      const w = ctx.measureText(value).width;
+      if (w > maxWidth) ctx.font = `${weight} ${Math.round(size * Math.max(0.6, maxWidth / w))}px system-ui, sans-serif`;
+    }
     ctx.fillStyle = color;
     ctx.textAlign = align;
     ctx.textBaseline = 'middle';
@@ -106,7 +111,9 @@ export class Hud {
     p.card();
     const w = p.canvas.width;
     p.text(title, w / 2, 100, 84, '#ffffff', 700, 'center', w * 0.9);
-    lines.forEach((line, i) => p.text(line.text, w / 2, 192 + i * 66, 44, line.color || DIM, 600, 'center', w * 0.88));
+    const step = lines.length > 4 ? Math.min(66, 250 / (lines.length - 1)) : 66;
+    const size = lines.length > 4 ? 38 : 44;
+    lines.forEach((line, i) => p.text(line.text, w / 2, 182 + i * step, size, line.color || DIM, 600, 'center', w * 0.88));
     p.text(hint, w / 2, p.canvas.height - 50, 38, DIM, 600, 'center', w * 0.9);
     p.commit();
     p.mesh.visible = true;

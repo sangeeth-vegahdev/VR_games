@@ -3,35 +3,139 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Object3D, Quaternion, Vector3 } from '@iwsdk/core';
-import { CFG, PITCHES } from '../src/config.js';
+import { CFG } from '../src/config.js';
+import {
+  breakAccel, callOffset, callWords, choosePitch, clampToReach, commandMiss, drawnRps, flutterAt, flutterParams,
+  FRAME, INCH, LEVELS, levelById, MPH, PITCHES, pitchSpeed, REACH, SPEED, spinAxis, STRIKE_ZONE, umpire,
+} from '../src/pitches.js';
 import { FocusTracker } from '../src/gaze.js';
 
 const BALL_RADIUS = 0.048; // src/ball.js
 
 // ---------- tuning ----------
 
-test('the four pitches unlock in order, starting with the fastball on pitch 1', () => {
-  assert.equal(PITCHES.length, 4);
-  assert.deepEqual(PITCHES.map((p) => p.name), ['Fastball', 'Changeup', 'Curveball', 'Slider']);
+const by = (n) => PITCHES.find((p) => p.name === n);
+const seq = (seed) => () => {
+  seed = (seed * 1664525 + 1013904223) % 4294967296;
+  return seed / 4294967296;
+};
+
+test('the whole arsenal: twelve pitches, unlocking in order from the four-seamer on pitch 1', () => {
+  assert.deepEqual(PITCHES.map((p) => p.name), [
+    'Four-seam fastball', 'Sinker', 'Changeup', 'Cutter', 'Curveball', 'Slider', 'Splitter', 'Sweeper',
+    'Knuckle curve', 'Screwball', 'Knuckleball', 'Eephus',
+  ]);
   assert.equal(PITCHES[0].from, 1);
   for (let i = 1; i < PITCHES.length; i++) assert.ok(PITCHES[i].from > PITCHES[i - 1].from);
   for (const p of PITCHES) assert.ok(p.from <= CFG.pitches, `${p.name} must unlock within a round`);
 });
 
-test('pitch speeds and breaks are sensible', () => {
-  for (const p of PITCHES) {
-    assert.ok(p.speed > 0 && p.speed <= 1.1, `${p.name} speed factor`);
-    assert.equal(p.break.length, 2);
-    assert.ok(p.break.every(Number.isFinite));
+test('a full round calls every pitch in the arsenal, and the fastball most', () => {
+  const rand = seq(7);
+  const counts = {};
+  for (let n = 1; n <= 25; n++) {
+    const p = choosePitch(n, rand);
+    assert.ok(p.from <= n, `${p.name} is not unlocked on pitch ${n}`);
+    counts[p.name] = (counts[p.name] || 0) + 1;
   }
-  const fast = PITCHES.find((p) => p.name === 'Fastball');
-  const curve = PITCHES.find((p) => p.name === 'Curveball');
-  const slider = PITCHES.find((p) => p.name === 'Slider');
-  const change = PITCHES.find((p) => p.name === 'Changeup');
-  // A curveball dives more than a fastball; a slider breaks further sideways (to the catcher's left).
-  assert.ok(curve.break[1] < fast.break[1], 'curveball drops more than the fastball');
-  assert.ok(slider.break[0] < fast.break[0], 'slider moves further sideways than the fastball');
-  assert.ok(change.speed < fast.speed, 'changeup is slower than the fastball');
+  for (const p of PITCHES) assert.ok(counts[p.name] >= 1, `${p.name} is thrown in a round`);
+  // Over many pitches the usage follows a big-league mix: four-seamers most, the eephus rarely.
+  const many = {};
+  for (let i = 0; i < 20000; i++) { const p = choosePitch(25, rand); many[p.name] = (many[p.name] || 0) + 1; }
+  assert.ok(many['Four-seam fastball'] > many.Slider && many.Slider > many.Eephus);
+  // A shaken-off sign is never the pitch he then throws.
+  for (let i = 0; i < 200; i++) assert.notEqual(choosePitch(25, rand, PITCHES[0]), PITCHES[0]);
+});
+
+test('speeds are Statcast speeds: 95 mph four-seamer in the majors, slower in pro and rookie', () => {
+  const mph = (p, level, ramp = 1) => pitchSpeed(p, levelById(level), ramp, () => 0.5) * MPH;
+  assert.ok(Math.abs(mph(PITCHES[0], 'majors') - 95) < 0.5, 'majors four-seamer');
+  assert.ok(mph(PITCHES[0], 'pro') > 74 && mph(PITCHES[0], 'pro') < 82, 'pro four-seamer');
+  assert.ok(mph(PITCHES[0], 'rookie') > 54 && mph(PITCHES[0], 'rookie') < 64, 'rookie four-seamer');
+  assert.ok(mph(PITCHES[0], 'pro', 0) < mph(PITCHES[0], 'pro', 1) - 25, 'the round ramps up from an easy first pitch');
+  // The order of speeds is a real pitcher's: four-seam > sinker > cutter > split/change/slider > curve > knuckler > eephus.
+  const m = (n) => by(n).mph;
+  assert.ok(m('Four-seam fastball') > m('Sinker') && m('Sinker') > m('Cutter') && m('Cutter') > m('Splitter'));
+  assert.ok(m('Splitter') > m('Curveball') && m('Changeup') > m('Curveball') && m('Curveball') > m('Knuckleball'));
+  assert.ok(m('Eephus') < 60 && m('Knuckleball') < 80);
+  // Never over the cap, even when he reaches back.
+  const rand = seq(3);
+  for (let i = 0; i < 2000; i++) assert.ok(pitchSpeed(PITCHES[0], levelById('majors'), 1, rand) * MPH <= SPEED.capMph);
+});
+
+test('movement: each pitch moves its real inches, the right way, whatever the speed', () => {
+  const move = (p, T) => { const a = breakAccel(p, T, 1, {}); return { x: (0.5 * a.x * T * T) / INCH, y: (0.5 * a.y * T * T) / INCH }; };
+  for (const p of PITCHES) {
+    for (const T of [0.42, 0.7]) {
+      const d = move(p, T);
+      assert.ok(Math.abs(d.y - p.ivb) < 1e-6 && Math.abs(d.x + p.hb) < 1e-6, `${p.name} over ${T}s`);
+    }
+  }
+  // A right-hander's arm side is the catcher's left (-x): sinker and changeup run that way, the
+  // sweeper and slider go glove side (+x), the four-seamer rides, the curveballs drop.
+  assert.ok(move(by('Sinker'), 0.42).x < -10 && move(by('Changeup'), 0.42).x < -10 && move(by('Screwball'), 0.42).x < -10);
+  assert.ok(move(by('Sweeper'), 0.42).x > 12 && move(by('Slider'), 0.42).x > 2 && move(by('Cutter'), 0.42).x > 1);
+  assert.ok(by('Four-seam fastball').ivb > 14 && by('Curveball').ivb < -8 && by('Knuckle curve').ivb < -8);
+  assert.ok(Math.abs(by('Sweeper').hb) > Math.abs(by('Slider').hb), 'a sweeper sweeps more than a gyro slider');
+});
+
+test('each pitch spins the way that makes it move (Magnus: spin x velocity), plus its bullet spin', () => {
+  const v = new Vector3(0, 0, 1); // the pitch flies towards the catcher
+  for (const p of PITCHES) {
+    const axis = new Vector3().copy(spinAxis(p, {}));
+    assert.ok(Math.abs(axis.length() - 1) < 1e-9, `${p.name} unit axis`);
+    assert.ok(drawnRps(p) > 0, `${p.name} turns`);
+    if (Math.hypot(p.hb, p.ivb) < 3) continue; // a knuckleball hardly moves from spin
+    const f = axis.clone().cross(v).normalize(); // direction of the Magnus force
+    const want = new Vector3(-p.hb, p.ivb, 0).normalize();
+    assert.ok(f.dot(want) > 0.999, `${p.name}: spin pushes it the way it breaks`);
+    assert.ok(Math.abs(axis.z - p.gyro) < 1e-9, `${p.name}: its share of bullet spin`);
+  }
+  assert.ok(spinAxis(by('Four-seam fastball'), {}).x < -0.85, 'four-seamer: mostly backspin');
+  assert.ok(new Vector3().copy(spinAxis(by('Curveball'), {})).cross(v).y < -0.6, 'curveball: topspin dives');
+  assert.ok(spinAxis(by('Slider'), {}).z > 0.6, 'slider: mostly bullet spin');
+  assert.ok(drawnRps(by('Knuckleball')) < 3, 'a knuckleball barely turns');
+});
+
+test('a knuckleball flutters in flight and still crosses where it was aimed', () => {
+  const f = flutterParams(by('Knuckleball'), seq(11), {});
+  const T = 0.5;
+  let most = 0;
+  for (let t = 0; t <= T; t += 0.01) most = Math.max(most, Math.hypot(...Object.values(flutterAt(f, t, T, {}))));
+  assert.ok(most > 0.03, 'it dances');
+  const end = flutterAt(f, T, T, {});
+  assert.ok(Math.hypot(end.x, end.y) < 1e-12 && Math.hypot(...Object.values(flutterAt(f, 0, T, {}))) < 1e-12);
+});
+
+test('the battery: called spots are in the zone; command misses stay catchable; a good target is tighter', () => {
+  for (const p of PITCHES) for (const c of p.calls) {
+    const o = callOffset(c, {});
+    assert.ok(Math.abs(o.x) <= STRIKE_ZONE.halfWidth && Math.abs(o.y) <= STRIKE_ZONE.halfHeight, `${p.name} ${c}`);
+    assert.ok(callWords(c).length > 1);
+  }
+  assert.ok(callOffset('down-away', {}).x > 0 && callOffset('down-away', {}).y < 0, 'away is the catcher\'s right, vs a right-handed hitter');
+  const spread = (good) => {
+    const rand = seq(5);
+    let s = 0;
+    for (let i = 0; i < 4000; i++) { const m = commandMiss(PITCHES[0], rand, good, {}); s += m.x * m.x + m.y * m.y; }
+    return Math.sqrt(s / 4000);
+  };
+  assert.ok(spread(true) < spread(false) * 0.8, 'a good target tightens his command');
+  const far = clampToReach({ x: 2, y: -2 });
+  assert.ok(far.x === REACH.halfWidth && far.y === -REACH.halfHeight);
+});
+
+test('the umpire: strikes, balls, a framed strike and a stabbed ball', () => {
+  assert.equal(umpire({ x: 0, y: 0 }, true, 0.2).strike, true);
+  assert.equal(umpire({ x: 0.33, y: 0 }, true, 0.2).strike, false);
+  const edge = STRIKE_ZONE.halfWidth;
+  const framed = umpire({ x: edge + 0.03, y: 0 }, true, 0.3);
+  assert.ok(framed.strike && framed.framed, 'just off the plate, caught quietly: framed');
+  assert.ok(!umpire({ x: edge + 0.03, y: 0 }, true, 2).strike, 'caught with the mitt moving: a ball');
+  assert.ok(!umpire({ x: edge + 0.03, y: 0 }, false, 0).strike, 'not caught: no framing');
+  const stab = umpire({ x: edge - 0.02, y: 0 }, true, 3.5);
+  assert.ok(!stab.strike && stab.stabbed, 'a stab at a corner strike loses it');
+  assert.ok(FRAME.quiet < FRAME.stab);
 });
 
 test('the catch zone is bigger than the ball, and a near miss is a real near miss', () => {
@@ -42,48 +146,35 @@ test('the catch zone is bigger than the ball, and a near miss is a real near mis
   assert.ok(CFG.backOfMitt < 0 && CFG.backOfMitt > -1, 'back-of-mitt cut-off is an angle cosine');
 });
 
-test('speeds ramp up and stay within the cap; the round is long enough to ramp', () => {
-  assert.ok(CFG.startSpeed < CFG.maxSpeed);
-  assert.ok(CFG.rampPitches < CFG.pitches, 'the ramp finishes inside the round');
-  assert.ok(CFG.maxSpeed * 2.23694 < 75, 'top speed stays a readable 75 mph or less');
+test('levels and the round: the default is pro, and the ramp finishes inside the round', () => {
+  assert.deepEqual(LEVELS.map((l) => l.id), ['rookie', 'pro', 'majors']);
+  assert.equal(CFG.level, 'pro');
+  assert.equal(levelById('nonsense').id, 'pro');
+  assert.ok(CFG.rampPitches < CFG.pitches);
+  assert.ok(CFG.signTime > 0.5 && CFG.shakeChance < 0.3);
 });
 
 test('focus cones: the eyes can be tighter than the head, which must be looser', () => {
   assert.ok(CFG.focusConeEyes > 0 && CFG.focusConeEyes < CFG.focusConeHead);
 });
 
-test('the strike-zone hint is shown only for the first pitches', () => {
-  assert.ok(CFG.zoneHint);
-  assert.ok(CFG.zoneHintPitches > 0 && CFG.zoneHintPitches < CFG.pitches);
-});
-
-test('each pitch spins the way that makes it move (Magnus: spin x velocity)', () => {
-  const v = new Vector3(0, 0, 1); // the pitch flies towards the catcher
-  for (const p of PITCHES) {
-    const f = new Vector3(...p.spin.axis).normalize().cross(v); // direction of the Magnus force
-    assert.ok(p.spin.rps > 0, `${p.name} spins`);
-    // Sideways, the spin pushes the way the pitch breaks.
-    if (Math.abs(p.break[0]) > 0.5) assert.equal(Math.sign(f.x), Math.sign(p.break[0]), `${p.name} sideways`);
-  }
-  const by = (n) => PITCHES.find((p) => p.name === n);
-  const lift = (n) => new Vector3(...by(n).spin.axis).normalize().cross(v).y;
-  assert.ok(lift('Fastball') > 0.9, 'fastball backspin lifts');
-  assert.ok(lift('Curveball') < -0.9, 'curveball topspin dives');
-});
-
 // ---------- the flight maths (the same solve the game uses) ----------
 
-test('a solved pitch arrives exactly at its aim point, for every pitch type', () => {
+test('a solved pitch arrives exactly at its aim point, for every pitch type and level', () => {
   // The game solves: vel = (aim - from) / T - accel * T / 2, then pos(T) = from + vel T + accel T^2 / 2.
-  const from = new Vector3(0.1, 1.77, -17.9);
+  const from = new Vector3(-0.6, 1.77, -17.9);
   const aim = new Vector3(-0.2, 0.95, -0.55);
   for (const p of PITCHES) {
-    for (const [speed, k] of [[15, 0.45], [28, 1]]) {
-      const accel = new Vector3(p.break[0] * k, p.break[1] * k - CFG.gravity, 0);
-      const T = from.distanceTo(aim) / (speed * p.speed);
-      const vel = aim.clone().sub(from).divideScalar(T).addScaledVector(accel, -0.5 * T);
-      const at = from.clone().addScaledVector(vel, T).addScaledVector(accel, 0.5 * T * T);
-      assert.ok(at.distanceTo(aim) < 1e-9, `${p.name} at speed ${speed}`);
+    for (const level of LEVELS) {
+      for (const ramp of [0, 1]) {
+        const speed = pitchSpeed(p, level, ramp, () => 0.5);
+        const T = from.distanceTo(aim) / speed;
+        const b = breakAccel(p, T, 0.45 + 0.55 * ramp, {});
+        const accel = new Vector3(b.x, b.y - CFG.gravity, 0);
+        const vel = aim.clone().sub(from).divideScalar(T).addScaledVector(accel, -0.5 * T);
+        const at = from.clone().addScaledVector(vel, T).addScaledVector(accel, 0.5 * T * T);
+        assert.ok(at.distanceTo(aim) < 1e-9, `${p.name} ${level.id}`);
+      }
     }
   }
 });
