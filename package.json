@@ -1,0 +1,17 @@
+{
+  "name": "vr-games-hub",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Central VR Lobby and Three WebXR Sports & Arcade Games for Meta Quest",
+  "scripts": {
+    "dev": "node start-all.mjs",
+    "dev:all": "node start-all.mjs",
+    "dev:lobby": "cd vr-lobby && npm run dev",
+    "dev:cricket": "cd cricket-xr && npm run dev:runtime",
+    "dev:baseball": "cd baseball-xr && npm run dev:runtime",
+    "dev:bulb-rush": "cd bulb-rush-xr && npm run dev:runtime",
+    "test:lobby": "cd vr-lobby && npm run test:unit",
+    "build:lobby": "cd vr-lobby && npm run build"
+  }
+}
+

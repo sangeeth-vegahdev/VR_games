@@ -1,0 +1,28 @@
+{
+  "version": "iwsdk.scene.v1",
+  "units": "meters",
+  "components": {
+    "com.iwsdk.components.DomeGradient": {
+      "sky": [0.004, 0.004, 0.005, 1],
+      "equator": [0.008, 0.008, 0.009, 1],
+      "ground": [0.003, 0.003, 0.004, 1],
+      "elevationDeg": 30,
+      "azimuthDeg": 45,
+      "dither": true
+    },
+    "com.iwsdk.components.IBLGradient": {
+      "sky": [0.5, 0.5, 0.5, 1],
+      "equator": [0.45, 0.45, 0.45, 1],
+      "ground": [0.2, 0.2, 0.2, 1],
+      "intensity": 0.5
+    }
+  },
+  "environment": {
+    "toneMapping": "aces",
+    "exposure": 1.0,
+    "shadows": false,
+    "shadowMapType": "pcf"
+  },
+  "resources": {},
+  "nodes": []
+}

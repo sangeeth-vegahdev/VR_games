@@ -1,0 +1,5 @@
+node_modules/
+dist/
+.iwsdk/
+.vite/
+tests/out/

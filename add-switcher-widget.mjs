@@ -1,0 +1,40 @@
+import fs from 'node:fs';
+
+const widget = `
+    <!-- Floating IWSDK Device Switcher (Meta Quest 3 vs Meta Quest Pro) -->
+    <div id="iwsdk-device-switcher" style="position:fixed;bottom:16px;left:16px;z-index:999999;display:flex;align-items:center;gap:8px;background:rgba(15,23,42,0.92);backdrop-filter:blur(10px);padding:8px 12px;border-radius:12px;border:1px solid rgba(255,255,255,0.15);font-family:system-ui,-apple-system,sans-serif;box-shadow:0 12px 32px rgba(0,0,0,0.6);">
+      <span style="color:#94a3b8;font-size:11px;font-weight:700;letter-spacing:0.5px;">EMULATOR:</span>
+      <button id="dev-btn-q3" onclick="setEmulatorDevice('metaQuest3')" style="padding:6px 12px;font-size:12px;font-weight:600;border-radius:8px;border:1px solid transparent;cursor:pointer;background:#1e293b;color:#94a3b8;transition:all 0.2s;">🥽 Meta Quest 3</button>
+      <button id="dev-btn-pro" onclick="setEmulatorDevice('metaQuestPro')" style="padding:6px 12px;font-size:12px;font-weight:600;border-radius:8px;border:1px solid transparent;cursor:pointer;background:#1e293b;color:#94a3b8;transition:all 0.2s;">👁️ Meta Quest Pro (Eye Gaze)</button>
+    </div>
+    <script>
+      function setEmulatorDevice(dev) {
+        localStorage.setItem('iwsdk:device', dev);
+        const url = new URL(window.location.href);
+        url.searchParams.set('device', dev);
+        window.location.href = url.toString();
+      }
+      (function() {
+        const cur = new URL(window.location.href).searchParams.get('device') || localStorage.getItem('iwsdk:device') || 'metaQuestPro';
+        const q3Btn = document.getElementById('dev-btn-q3');
+        const proBtn = document.getElementById('dev-btn-pro');
+        if (cur === 'metaQuest3') {
+          if (q3Btn) { q3Btn.style.background = '#2563eb'; q3Btn.style.color = '#ffffff'; q3Btn.style.borderColor = '#60a5fa'; }
+        } else {
+          if (proBtn) { proBtn.style.background = '#0ea5e9'; proBtn.style.color = '#ffffff'; proBtn.style.borderColor = '#38bdf8'; }
+        }
+      })();
+    </script>
+`;
+
+const apps = ['vr-lobby/index.html', 'cricket-xr/index.html', 'baseball-xr/index.html', 'bulb-rush-xr/index.html'];
+
+for (const f of apps) {
+  if (!fs.existsSync(f)) continue;
+  let html = fs.readFileSync(f, 'utf8');
+  if (html.includes('iwsdk-device-switcher')) continue;
+  html = html.replace('</body>', `${widget}\n  </body>`);
+  fs.writeFileSync(f, html, 'utf8');
+  console.log('Added switcher widget to:', f);
+}
+
