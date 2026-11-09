@@ -8,7 +8,7 @@ const path = require('path');
   });
 
   const page = await browser.newPage({ viewport: { width: 1280, height: 720 }, ignoreHTTPSErrors: true });
-  await page.goto('https://localhost:8081/?balls=50');
+  await page.goto('https://localhost:8081/?balls=50&tutorial=0');
   await page.waitForFunction(() => window.__game && window.__world, null, { timeout: 30000 });
 
   // Start game so title card is dismissed and scoreboard is visible

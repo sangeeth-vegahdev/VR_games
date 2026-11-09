@@ -23,7 +23,7 @@ fs.mkdirSync(OUT, { recursive: true });
   const page = await browser.newPage({ ignoreHTTPSErrors: true, viewport: { width: Number(process.env.VW || 1280), height: Number(process.env.VH || 720) } });
   const errs = [];
   page.on('pageerror', (e) => errs.push(e.message));
-  await page.goto(GAME_URL + '/');
+  await page.goto(GAME_URL + '/?tutorial=0');
   await page.waitForFunction(() => window.__game && window.__world, null, { timeout: 60000 });
   await page.evaluate(() => {
     window.IWER_DEVICE.primaryInputMode = 'hand';

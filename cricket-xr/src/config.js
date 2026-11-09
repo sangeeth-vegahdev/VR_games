@@ -2,7 +2,13 @@
 // Round length: 50 balls by default. `?balls=N` in the URL overrides it (handy for quick tests).
 const ballsOverride = Number(new URLSearchParams(globalThis.location?.search ?? '').get('balls'));
 
+// First-time practice: three slow, gentle balls before the real round. `?tutorial=0` skips it (tests).
+const skipTutorial = new URLSearchParams(globalThis.location?.search ?? '').get('tutorial') === '0';
+
 export const CFG = {
+  skipTutorial,
+  tutorialBalls: 3, // catches needed to finish the practice
+  tutorialSpeed: 8, // m/s for the first practice ball (29 km/h); each next one is a little quicker
   balls: Number.isInteger(ballsOverride) && ballsOverride > 0 ? ballsOverride : 50,
   rampBalls: 25, // speed and swing climb over this many balls, then hold at their maximums
   startSpeed: 12, // m/s for ball 1 (43 km/h)

@@ -24,7 +24,7 @@ const MAX_MPH = Math.ceil(95 * 0.82 + (1.2 + 2.5) * 0.82); // the pro level's fa
   page.on('pageerror', (e) => errors.push(e.message));
   page.on('console', (m) => m.type() === 'error' && !/ERR_TUNNEL|Failed to load resource/.test(m.text()) && errors.push(m.text()));
 
-  await page.goto(`${GAME_URL}/?pitches=${PITCHES}`);
+  await page.goto(`${GAME_URL}/?pitches=${PITCHES}&tutorial=0`);
   await page.waitForFunction(() => window.__game && window.__world, null, { timeout: 60000 });
   await page.evaluate((n) => localStorage.removeItem('glove-up-best-' + n + '-pro'), PITCHES);
   await page.evaluate(() => {
@@ -355,7 +355,7 @@ const MAX_MPH = Math.ceil(95 * 0.82 + (1.2 + 2.5) * 0.82); // the pro level's fa
   // Desktop visitors (no headset): the mouse moves the mitt. Play a whole round with it.
   const desk = await browser.newPage({ ignoreHTTPSErrors: true, viewport: { width: 900, height: 700 } });
   desk.on('pageerror', (e) => errors.push('desktop: ' + e.message));
-  await desk.goto(`${GAME_URL}/?pitches=6`);
+  await desk.goto(`${GAME_URL}/?pitches=6&tutorial=0`);
   await desk.waitForFunction(() => window.__game && window.__world, null, { timeout: 60000 });
   await desk.waitForTimeout(1000);
   const mouse = await desk.evaluate(() => {

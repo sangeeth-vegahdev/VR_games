@@ -45,11 +45,24 @@ export class DesktopHand {
       world.createTransformEntity(this.hand);
     }
 
-    const el = world.renderer.domElement;
+    const el = window; // the page can hold more than one canvas; accept the pointer over any of them
+    this.gripSum = new Vector3();
+    this.gripPrev = new Vector3();
+    this.gripKnown = false;
+    this.tmp = new Vector3();
     const onMove = (e) => {
-      const r = el.getBoundingClientRect();
-      this.ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+      const cv = e.target;
+      if (!cv || cv.tagName !== 'CANVAS') return; // ignore the emulator's panels and page UI
+      const r = cv.getBoundingClientRect();
+      if (document.pointerLockElement === cv) {
+        // Emulator Play mode: the pointer is locked, so accumulate its movement.
+        this.ndc.x = Math.max(-1, Math.min(1, this.ndc.x + (e.movementX / r.width) * 2));
+        this.ndc.y = Math.max(-1, Math.min(1, this.ndc.y - (e.movementY / r.height) * 2));
+      } else {
+        this.ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+      }
       this.seen = true;
+      this.gripKnown = false;
     };
     el.addEventListener('pointermove', onMove);
     this.dispose = () => el.removeEventListener('pointermove', onMove);
@@ -96,20 +109,44 @@ export class DesktopHand {
     return hand;
   }
 
-  update() {
-    if (this.world.session || !this.seen) {
+  // A controller moved by hand (emulator handle) takes control back from the mouse.
+  controllerMoved(player) {
+    if (!player || !player.gripSpaces) return false;
+    this.gripSum.set(0, 0, 0);
+    for (const side of ['left', 'right']) {
+      const g = player.gripSpaces[side];
+      if (g && g.visible) this.gripSum.add(g.getWorldPosition(this.tmp));
+    }
+    const moved = this.gripKnown && this.gripSum.distanceTo(this.gripPrev) > 0.03;
+    this.gripPrev.copy(this.gripSum);
+    this.gripKnown = true;
+    return moved;
+  }
+
+  update(player) {
+    const inSession = !!this.world.session;
+    if (this.seen && inSession && this.controllerMoved(player)) this.seen = false;
+    if (!this.seen) {
       this.active = false;
       this.marker.visible = false;
       if (this.hand) this.hand.visible = false;
       return;
     }
-    this.ray.setFromCamera(this.ndc, this.world.camera);
-    if (this.ray.ray.intersectPlane(this.plane, this.hit)) {
-      this.position.set(
-        Math.min(1.5, Math.max(-1.5, this.hit.x)),
-        Math.min(2.4, Math.max(0.3, this.hit.y)),
-        CATCH_PLANE_Z,
-      );
+    if (inSession) {
+      // In the emulator the page camera is the headset, so map the pointer straight to a reach area:
+      // across +-1.2 m, and from 0.3 m (low catch) up to 2.2 m (high catch).
+      this.position.set(this.ndc.x * 1.2, 1.25 + this.ndc.y * 0.95, CATCH_PLANE_Z);
+      if (this.hand) this.hand.scale.setScalar(1);
+    } else {
+      this.ray.setFromCamera(this.ndc, this.world.camera);
+      if (this.ray.ray.intersectPlane(this.plane, this.hit)) {
+        this.position.set(
+          Math.min(1.5, Math.max(-1.5, this.hit.x)),
+          Math.min(2.4, Math.max(0.3, this.hit.y)),
+          CATCH_PLANE_Z,
+        );
+      }
+      if (this.hand) this.hand.scale.setScalar(1.4);
     }
     this.active = true;
     this.marker.position.copy(this.position);

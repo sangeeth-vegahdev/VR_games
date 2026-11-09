@@ -13,6 +13,12 @@ import { CFG } from './config.js';
 //
 // On a PC there is no head to track, so focus is not measured.
 
+// In the IWER desktop emulator there are no eyes. So the mouse stands in for them: wherever the mouse is
+// over the view is where the "eyes" look (no gaze mode or pointer setup needed). Real eye tracking wins
+// whenever the headset reports it.
+const EMU_HALF_FOV_X = Math.tan((38 * Math.PI) / 180);
+const EMU_HALF_FOV_Y = Math.tan((30 * Math.PI) / 180);
+
 const SEPARATION_DEG = 2.5; // a gaze ray this far off the head's forward line is real eye tracking
 
 export class FocusTracker {
@@ -25,6 +31,17 @@ export class FocusTracker {
     this.v = new Vector3();
     this.headDir = new Vector3();
     this.q = new Quaternion();
+    this.emuX = 0; // emulator mouse, -1..1 across the view
+    this.emuY = 0;
+    this.emuMoved = false;
+    this.simulated = false; // true while the mouse is standing in for the eyes
+    if (typeof window !== 'undefined' && window.addEventListener) {
+      window.addEventListener('pointermove', (e) => {
+        this.emuX = (e.clientX / window.innerWidth) * 2 - 1;
+        this.emuY = -((e.clientY / window.innerHeight) * 2 - 1);
+        this.emuMoved = true;
+      });
+    }
     this.resetPitch();
   }
 
@@ -37,6 +54,7 @@ export class FocusTracker {
 
   // Reads this frame's gaze. inHeadset: an XR session is running.
   sample(player, camera, inHeadset) {
+    this.simulated = false;
     if (!inHeadset) {
       this.mode = 'none';
       camera.getWorldPosition(this.origin);
@@ -54,6 +72,13 @@ export class FocusTracker {
         this.mode = 'eyes';
         return;
       }
+    }
+    if (typeof window !== 'undefined' && window.IWER_DEVICE && this.emuMoved) {
+      // Emulator: aim the gaze ray from the head toward the mouse position.
+      this.dir.set(this.emuX * EMU_HALF_FOV_X, this.emuY * EMU_HALF_FOV_Y, -1).normalize().applyQuaternion(this.q.copy(player.head.getWorldQuaternion(this.q)));
+      this.mode = 'eyes';
+      this.simulated = true;
+      return;
     }
     this.dir.copy(this.headDir);
     this.mode = 'head';

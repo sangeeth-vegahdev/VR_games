@@ -25,7 +25,7 @@ const MAX_KMH = Math.round((22 + 1.5) * 3.6); // top speed incl. jitter
   page.on('pageerror', (e) => errors.push(e.message));
   page.on('console', (m) => m.type() === 'error' && !/ERR_TUNNEL|Failed to load resource/.test(m.text()) && errors.push(m.text()));
 
-  await page.goto(GAME_URL + '/?balls=' + BALLS);
+  await page.goto(GAME_URL + '/?balls=' + BALLS + '&tutorial=0');
   await page.waitForFunction(() => window.__game && window.__world, null, { timeout: 30000 });
   await page.evaluate((n) => localStorage.removeItem('cricket-catch-best-' + n), BALLS);
   await page.evaluate(() => {
@@ -250,7 +250,7 @@ const MAX_KMH = Math.round((22 + 1.5) * 3.6); // top speed incl. jitter
   desk.on('pageerror', (e) => errors.push('desktop: ' + e.message));
   for (let attempt = 0; attempt < 5; attempt++) {
     try {
-      await desk.goto(GAME_URL + '/?balls=6');
+      await desk.goto(GAME_URL + '/?balls=6&tutorial=0');
       break;
     } catch (e) {
       if (attempt === 4) throw e;

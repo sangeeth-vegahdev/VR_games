@@ -14,7 +14,7 @@ const W = 800, H = 450;
   const page = await browser.newPage({ ignoreHTTPSErrors: true, viewport: { width: W, height: H } });
   const errs = [];
   page.on('pageerror', (e) => errs.push(e.message.slice(0, 200)));
-  await page.goto('https://localhost:8081/?balls=3');
+  await page.goto('https://localhost:8081/?balls=3&tutorial=0');
   await page.waitForFunction(() => window.__game && window.__world, null, { timeout: 40000 });
   await page.evaluate(() => { localStorage.removeItem('cricket-catch-best-3'); window.IWER_DEVICE.primaryInputMode = 'hand'; window.__world.launchXR(); });
   await page.waitForFunction(() => !!window.__world.session, null, { timeout: 15000 });

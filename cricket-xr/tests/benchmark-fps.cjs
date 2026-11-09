@@ -15,7 +15,7 @@ const fs = require('fs');
     viewport: { width: 1280, height: 720 },
   });
 
-  await page.goto('https://localhost:8081/?balls=50');
+  await page.goto('https://localhost:8081/?balls=50&tutorial=0');
   await page.waitForFunction(() => window.__game && window.__world, null, { timeout: 30000 });
 
   // 1. Enter XR mode with hand tracking

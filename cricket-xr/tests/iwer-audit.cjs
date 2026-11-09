@@ -40,7 +40,7 @@ fs.mkdirSync(AUDIT_OUT, { recursive: true });
 
   // 1. Run the project using IWER & Test 2: Immersive VR Initialization
   console.log('\n[1/12] Launching game & initializing WebXR session...');
-  await page.goto('https://localhost:8081/?balls=50');
+  await page.goto('https://localhost:8081/?balls=50&tutorial=0');
   await page.waitForFunction(() => window.__game && window.__world, null, { timeout: 30000 });
 
   const iwsdkConfig = JSON.parse(fs.readFileSync('iwsdk.config.json', 'utf8'));

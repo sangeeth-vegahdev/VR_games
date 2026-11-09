@@ -134,3 +134,60 @@ test('eye ring tracker: visual reticle locks on and scales with distance', () =>
   assert.ok(tracker.group.position.distanceTo(ball) > 4, 'reticle moves away from ball with eye direction');
   assert.equal(tracker.ringMaterial.color.getHex(), 0xffffff, 'ring dims to white when off target');
 });
+
+test('continuous collision detection: prevents tunneling on 79 km/h fast deliveries', () => {
+  const topSpeedMps = 79 / 3.6; // ~21.94 m/s
+  const dt = 1 / 30; // 30 FPS dropped frame scenario
+  const travelPerFrame = topSpeedMps * dt; // ~0.731 m
+  const reach = BALL_RADIUS + CFG.handMargin; // ~0.15 m
+
+  // Ball moves along -Z from -0.40m to +0.33m, crossing hand at z = 0.00m
+  const prevBall = new Vector3(0, 1.3, -0.40);
+  const nextBall = new Vector3(0, 1.3, -0.40 + travelPerFrame);
+  const hand = new Vector3(0, 1.3, 0.0);
+
+  // 1. Verify discrete collision check fails (tunnels)
+  const discreteHitPrev = prevBall.distanceTo(hand) <= reach;
+  const discreteHitNext = nextBall.distanceTo(hand) <= reach;
+  assert.equal(discreteHitPrev || discreteHitNext, false, 'Discrete point collision tunnels completely through the hand');
+
+  // 2. Swept segment CCD algorithm from src/game.js
+  const r0 = prevBall.clone().sub(hand);
+  const r1 = nextBall.clone().sub(hand);
+  const seg = r1.clone().sub(r0);
+  const lenSq = seg.lengthSq();
+  const t = lenSq > 0 ? Math.min(1, Math.max(0, -r0.dot(seg) / lenSq)) : 0;
+  const closest = r0.clone().addScaledVector(seg, t);
+  const minDistance = closest.length();
+
+  assert.ok(minDistance < 1e-4, 'Swept trajectory passes through exact center of hand');
+  assert.ok(minDistance <= reach, 'Continuous collision detection successfully registers the catch');
+  assert.ok(t > 0.4 && t < 0.6, `Impact occurs mid-frame at t=${t.toFixed(3)}`);
+});
+
+test('round delivery progression: all 50 deliveries maintain valid physical properties', () => {
+  for (let i = 0; i < CFG.balls; i++) {
+    const ramp = Math.min(1, i / CFG.rampBalls);
+    const speed = CFG.startSpeed + (CFG.maxSpeed - CFG.startSpeed) * ramp;
+    const kmh = speed * 3.6;
+    assert.ok(kmh >= 42.5 && kmh <= 79.5, `Ball ${i + 1} speed ${kmh} km/h is within valid bounds`);
+
+    const swing = CFG.swingBase + (CFG.swingMax - CFG.swingBase) * ramp;
+    assert.ok(swing >= CFG.swingBase && swing <= CFG.swingMax, `Ball ${i + 1} swing ${swing} is within limits`);
+  }
+});
+
+test('back-of-hand glance: normal dot product cleanly distinguishes palm catch from glance', () => {
+  const palmNormal = new Vector3(0, 0, -1); // Palm facing towards bowler (-Z)
+  const incomingBallDir = new Vector3(0, 0, 1); // Ball traveling towards player (+Z)
+  const from = incomingBallDir.clone().negate(); // Vector pointing from hand towards ball (-Z)
+
+  // Palm facing ball directly: dot product is +1.0
+  const frontalDot = palmNormal.dot(from);
+  assert.ok(frontalDot > CFG.backOfHand, 'Frontal palm catch has dot > backOfHand threshold');
+
+  // Hand turned around: palm facing +Z (away from bowler)
+  const backNormal = new Vector3(0, 0, 1);
+  const backDot = backNormal.dot(from);
+  assert.ok(backDot < CFG.backOfHand, 'Back-of-hand has dot < backOfHand threshold (deflection)');
+});

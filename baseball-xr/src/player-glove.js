@@ -59,7 +59,8 @@ export class PlayerGlove {
   update(player, desktop, inHeadset, dt = 1 / 60) {
     this.prevPocket.copy(this.pocket);
     this.prevOk = this.ok;
-    if (!inHeadset) {
+    if (!inHeadset || desktop.active) {
+      // No headset, or the emulator's mouse is standing in for the hand.
       this.updateDesktop(desktop);
     } else {
       this.updateTracked(player);
@@ -119,9 +120,17 @@ export class PlayerGlove {
       }
       return;
     }
-    // No joints: use the grip position, mitt held up facing the pitcher.
+    // No joints (a controller): the grip position, fingers up. The pocket faces where the controller
+    // points, blended with "towards the pitcher" so a sloppy hold still catches; tilting the controller
+    // up or down, or turning it, tips the mitt.
     const p = grip.getWorldPosition(this.v[6]);
-    this.setPose(p, this.v[0].set(0, 0.97, 0.24), this.v[1].set(0, 0, -1), this.side === 'left' ? 1 : -1);
+    const normal = this.v[1].set(0, 0, -1);
+    const ray = player.raySpaces && player.raySpaces[this.side];
+    if (ray && ray.visible) {
+      const fwd = this.v[2].set(0, 0, -1).transformDirection(ray.matrixWorld);
+      if (fwd.z < -0.2) normal.multiplyScalar(0.4).addScaledVector(fwd, 0.6);
+    }
+    this.setPose(p, this.v[0].set(0, 0.97, 0.24), normal, this.side === 'left' ? 1 : -1);
     this.squeeze = 0;
   }
 

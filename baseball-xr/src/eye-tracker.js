@@ -24,8 +24,8 @@ import {
 
 const COLOR_LOCKED = 0x5eead4; // vibrant cyan-teal when eyes are on the ball
 const COLOR_IDLE = 0xffffff;   // crisp translucent white when off target
-const BASE_ANGULAR_SCALE = 0.045; // reticle scale factor per metre of distance
-const MIN_SCALE = 0.14;        // minimum world radius so it frames the ball cleanly near the mitt
+const BASE_ANGULAR_SCALE = 0.32;  // ring is sized by visual angle: outer radius ~1.8 degrees at any distance (0.098 * 0.32 = tan(1.8 deg) * 1)
+const MIN_SCALE = 0.05;        // floor so it never collapses right at the glove/hands
 
 export function projectGazePoint(origin, dir, targetPos, out = new Vector3()) {
   const dist = origin.distanceTo(targetPos);
@@ -46,10 +46,18 @@ export class EyeRingTracker {
       opacity: 0.5,
       side: DoubleSide,
       depthWrite: false,
+      depthTest: false, // never hidden behind the ball, dust or turf
     });
     // Base geometry: 0.08 inner, 0.098 outer radius
-    this.ringMesh = new Mesh(new RingGeometry(0.08, 0.098, 48), this.ringMaterial);
+    this.ringMesh = new Mesh(new RingGeometry(0.07, 0.098, 48), this.ringMaterial);
     this.group.add(this.ringMesh);
+
+    // Dark outline just outside the ring so it stays readable on bright sky, walls and chalk
+    this.outlineMesh = new Mesh(
+      new RingGeometry(0.098, 0.112, 48),
+      new MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.45, side: DoubleSide, depthWrite: false, depthTest: false }),
+    );
+    this.group.add(this.outlineMesh);
 
     // Subtle outer halo ring (matches the storyboard reticle)
     this.haloMaterial = new MeshBasicMaterial({
@@ -58,8 +66,9 @@ export class EyeRingTracker {
       opacity: 0.2,
       side: DoubleSide,
       depthWrite: false,
+      depthTest: false, // never hidden behind the ball, dust or turf
     });
-    this.haloMesh = new Mesh(new RingGeometry(0.12, 0.126, 48), this.haloMaterial);
+    this.haloMesh = new Mesh(new RingGeometry(0.115, 0.128, 48), this.haloMaterial);
     this.group.add(this.haloMesh);
 
     // Center focus pip
@@ -69,6 +78,7 @@ export class EyeRingTracker {
       opacity: 0.35,
       side: DoubleSide,
       depthWrite: false,
+      depthTest: false, // never hidden behind the ball, dust or turf
     });
     this.pipMesh = new Mesh(new RingGeometry(0, 0.014, 24), this.pipMaterial);
     this.group.add(this.pipMesh);

@@ -30,6 +30,7 @@ import { useSkinHands } from './hands.js';
 import { COLORS, Hud } from './hud.js';
 import { Pitcher } from './pitcher.js';
 import { bareHand, PlayerGlove } from './player-glove.js';
+import { DiagnosticsPanel } from './diagnostics.js';
 
 // Best score is remembered per round length and level. Storage can be blocked, so it is optional.
 const bestKey = (level) => `glove-up-best-${CFG.pitches}-${level}`;
@@ -73,6 +74,27 @@ function label(text, width, height) {
   return mesh;
 }
 
+// First-time practice is remembered once finished. Storage can be blocked, so it is optional.
+const TUT_KEY = 'glove-up-tutorial-done';
+function loadTutorialDone() {
+  try {
+    return localStorage.getItem(TUT_KEY) === '1';
+  } catch (e) {
+    return false;
+  }
+}
+function saveTutorialDone() {
+  try {
+    localStorage.setItem(TUT_KEY, '1');
+  } catch (e) {
+    /* not saved: the practice just shows again next time */
+  }
+}
+// One short line at a time, each said when it is useful (never a list of rules).
+const TUT_CALLS = ['middle', 'away', 'up'];
+const TUT_SIGN = ['Catch it in the gold ring', 'The ring moves. Follow it', 'Keep your eyes on the ball'];
+const TUT_CAUGHT = ['That is it! Again', 'Nice. One more', 'Gold glove!'];
+
 // Round flow: idle -> ready -> windup -> flying -> feedback -> (ready ... | over) -> ready ...
 export class GameSystem extends createSystem({}) {
   init() {
@@ -83,6 +105,7 @@ export class GameSystem extends createSystem({}) {
     this.hud = new Hud(this.world, CFG.pitches);
     this.focus = new FocusTracker();
     this.eyeTracker = new EyeRingTracker(this.world);
+    this.diagnostics = new DiagnosticsPanel('Glove Up (Baseball)');
 
     this.ball = makeBall();
     this.ball.visible = false;
@@ -104,6 +127,23 @@ export class GameSystem extends createSystem({}) {
     );
     this.marker.position.set(START_POS.x, START_POS.y, START_POS.z);
     this.world.createTransformEntity(this.marker);
+
+    this.lobbyOrb = new Group();
+    const lorbMesh = new Mesh(
+      new SphereGeometry(SWAP_RADIUS * 0.45, 20, 14),
+      new MeshStandardMaterial({ color: 0x00f0ff, emissive: 0x0088cc, emissiveIntensity: 1.2 }),
+    );
+    const lorbLabel = label('LOBBY', 0.28, 0.07);
+    lorbLabel.position.set(0, -0.11, 0);
+    this.lobbyOrb.add(lorbMesh, lorbLabel);
+    this.lobbyOrb.position.set(-0.65, 0.86, -0.45);
+    this.world.createTransformEntity(this.lobbyOrb);
+
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'l' || e.key === 'L') {
+        window.location.href = `${window.location.protocol}//${window.location.hostname}:8080`;
+      }
+    });
     this.swapOrb = new Group();
     const orb = new Mesh(new SphereGeometry(SWAP_RADIUS * 0.5, 20, 14), new MeshStandardMaterial({ color: 0xf2c230, emissive: 0x7a5a00, emissiveIntensity: 1 }));
     this.swapLabel = label('', 0.36, 0.07);
@@ -219,6 +259,9 @@ export class GameSystem extends createSystem({}) {
     this.reaction = null;
     this.best = loadBest(this.level.id);
     this.paused = false;
+    // First-time practice: null when not running. { stage: 'raise' | 'ball', done, fails, hold, t }
+    this.tutorialDone = CFG.skipTutorial || loadTutorialDone();
+    this.tut = null;
 
     this.showTitle();
 
@@ -254,6 +297,10 @@ export class GameSystem extends createSystem({}) {
       get level() { return this.sys.level.id; },
       get call() { return this.sys.call; },
       get umpire() { return this.sys.call_; },
+      get tutorial() { return !!this.sys.tut; },
+      get tutorialStage() { return this.sys.tut ? this.sys.tut.stage : null; },
+      get tutorialDone() { return this.sys.tutorialDone; },
+      get tutorialCaught() { return this.sys.tut ? this.sys.tut.done : null; },
       get strikes() { return this.sys.strikes; },
       get aim() { return this.sys.aim; },
       get ballPos() { return this.sys.ball.position; },
@@ -282,6 +329,17 @@ export class GameSystem extends createSystem({}) {
 
   showTitle() {
     const inHeadset = this.inHeadset();
+    if (!this.tutorialDone) {
+      // A first-timer sees two short lines, not the rules: the practice pitches teach the rest.
+      const first = [
+        { text: 'You are the catcher', color: COLORS.ink },
+        { text: inHeadset ? `Mitt on your ${this.glove.side} hand (the gold ball swaps it)` : 'The mouse is your mitt' },
+      ];
+      this.hud.showCard('Glove Up', first, inHeadset ? 'Touch the green ball to start' : 'Touch the green ball, or press Space');
+      this.swapLabel.userData.draw(`Mitt: ${this.glove.side} hand`);
+      this.levelLabel.userData.draw(`Speed: ${this.level.name}`);
+      return;
+    }
     const lines = [{ text: `Catch ${CFG.pitches} pitches with your mitt`, color: COLORS.ink }];
     lines.push({ text: 'Keep your eyes on the ball, all the way in' });
     lines.push({ text: 'Set your mitt on the gold ring: that is your target' });
@@ -334,6 +392,7 @@ export class GameSystem extends createSystem({}) {
     this.ball.visible = false;
     this.zone.visible = false;
     this.marker.visible = false;
+    this.lobbyOrb.visible = false;
     this.swapOrb.visible = false;
     this.levelOrb.visible = false;
     this.target.visible = false;
@@ -347,16 +406,47 @@ export class GameSystem extends createSystem({}) {
     if (!this.pitcher.isSet && !this.pitcher.move) this.pitcher.recover();
     this.state = 'ready';
     this.timer = CFG.readyDelay;
-    this.message('Play ball!', COLORS.ink, CFG.readyDelay);
+    this.tut = this.tutorialDone ? null : { stage: 'raise', done: 0, fails: 0, hold: 0, t: 0 };
+    if (this.tut) this.updateRaise(0);
+    else this.message('Play ball!', COLORS.ink, CFG.readyDelay);
+  }
+
+  // Practice, step one: a gold ring waits where the pitch will cross. Hold the mitt in it and the first
+  // pitch comes. The strike zone frame shows too, so the ring reads as "the target".
+  updateRaise(dt) {
+    const t = this.tut;
+    t.t += dt;
+    const inHeadset = this.inHeadset();
+    (inHeadset ? this.player.head : this.world.camera).getWorldPosition(this.head);
+    this.zoneCenter.set(0, Math.max(0.7, this.head.y - CFG.targetBelowHead), CFG.arriveZ);
+    this.calledAt.copy(this.zoneCenter);
+    this.target.position.copy(this.calledAt);
+    this.target.visible = true;
+    this.target.scale.setScalar(1 + 0.12 * Math.sin(t.t * 5));
+    this.zone.position.copy(this.zoneCenter);
+    this.zone.visible = true;
+    const near = this.glove.ok && this.glove.pocket.distanceTo(this.calledAt) < CFG.goodTarget + 0.06;
+    t.hold = near ? t.hold + dt : Math.max(0, t.hold - dt);
+    if (t.hold >= 0.5) {
+      t.stage = 'ball';
+      this.timer = 0.4;
+      this.sound.start();
+      this.message('Good. Here it comes', COLORS.good, 1.2);
+      return;
+    }
+    let text = inHeadset ? `Hold your ${this.glove.side} hand in the gold ring` : 'Move the mouse: mitt into the gold ring';
+    if (inHeadset && t.t > 8) text = 'Open your hand, mitt facing the pitcher';
+    this.message(text, '#ffd166', 0.5);
   }
 
   // The catcher puts the sign down: the pitch and the spot. He nods (or shakes one off first, and
   // then nods), and the gold ring marks the spot for the catcher's mitt.
   callPitch() {
-    this.pitchNo++;
+    const tut = this.tut;
+    if (!tut) this.pitchNo++;
     const rand = Math.random;
-    this.pitchType = choosePitch(this.pitchNo, rand);
-    this.call = chooseCall(this.pitchType, rand);
+    this.pitchType = tut ? PITCHES[0] : choosePitch(this.pitchNo, rand);
+    this.call = tut ? TUT_CALLS[Math.min(tut.done, 2)] : chooseCall(this.pitchType, rand);
     this.shakeOff = null;
     if (this.pitchNo > 3 && this.pitchType.from !== this.pitchNo && rand() < CFG.shakeChance) {
       this.shakeOff = choosePitch(this.pitchNo, rand, this.pitchType);
@@ -373,6 +463,7 @@ export class GameSystem extends createSystem({}) {
     this.zone.visible = CFG.zoneHint;
     const first = this.shakeOff || this.pitchType;
     this.showSign(first);
+    if (tut) this.message(TUT_SIGN[Math.min(tut.done, 2)], '#ffd166', CFG.signTime);
     this.pitcher.signal(this.shakeOff ? 'shake' : 'nod');
     this.state = 'sign';
     this.timer = CFG.signTime + (this.shakeOff ? CFG.shakeTime : 0);
@@ -399,13 +490,16 @@ export class GameSystem extends createSystem({}) {
   // He comes set and delivers. Where it really goes: the called spot plus his miss (tighter when the
   // catcher gives him a good target), never out of the catcher's reach.
   beginPitch() {
-    const ramp = Math.min(1, (this.pitchNo - 1) / CFG.rampPitches);
+    const tut = this.tut;
+    const ramp = Math.max(0, Math.min(1, (this.pitchNo - 1) / CFG.rampPitches));
     const rand = Math.random;
     this.ramp = ramp;
-    this.speed = pitchSpeed(this.pitchType, this.level, ramp, rand);
+    this.speed = tut ? CFG.tutorialSpeed + tut.done * 1.5 : pitchSpeed(this.pitchType, this.level, ramp, rand);
     this.mph = Math.round(this.speed * MPH);
     this.goodTarget = this.glove.ok && this.glove.pocket.distanceTo(this.calledAt) < CFG.goodTarget;
-    commandMiss(this.pitchType, rand, this.goodTarget, this.miss);
+    // Practice pitches go exactly where the ring is; the real pitcher misses his spot a little.
+    if (tut) this.miss.x = this.miss.y = 0;
+    else commandMiss(this.pitchType, rand, this.goodTarget, this.miss);
     this.offset.x += this.miss.x;
     this.offset.y += this.miss.y;
     clampToReach(this.offset);
@@ -464,6 +558,7 @@ export class GameSystem extends createSystem({}) {
   // The ball has met the pocket, at its current position: it settles in from there, and the
   // mitt is knocked back and snaps shut round it.
   caught() {
+    this.diagnostics?.recordEvent('caught', { spot: this.spot, pitch: this.currentPitch?.name, speedMph: this.speedMph });
     this.state = 'feedback';
     this.timer = CFG.feedbackDelay;
     this.held = true;
@@ -478,11 +573,15 @@ export class GameSystem extends createSystem({}) {
     const speed = this.vel.length();
     if (speed > 0) this.glove.impact(this.tmp.copy(this.vel).divideScalar(speed), speed);
     this.fx.dust(this.ball.position, this.glove.normal, this.spot === 'pocket' ? 1 : 0.6);
-    this.catches++;
-    this.streak++;
-    this.bestStreak = Math.max(this.bestStreak, this.streak);
+    if (!this.tut) {
+      this.catches++;
+      this.streak++;
+      this.bestStreak = Math.max(this.bestStreak, this.streak);
+    }
     this.zone.visible = false;
-    const ump = this.callIt(true);
+    let ump = '';
+    if (this.tut) this.target.visible = false;
+    else ump = this.callIt(true);
     this.fx.burst(this.ball.position); // at the point of contact
     // The pop: deeper in the pocket, and louder the harder it was thrown (a 95 mph four-seamer cracks).
     this.sound.caught(this.streak, (this.spot === 'pocket' ? 1 : this.spot === 'web' ? 0.55 : 0.7) * Math.min(1.25, 0.6 + this.speed / 70));
@@ -493,17 +592,26 @@ export class GameSystem extends createSystem({}) {
     const where = { pocket: 'Right in the pocket', web: 'In the web', heel: 'Off the heel', edge: 'On the edge' }[this.spot];
     let msg = this.spot === 'pocket' ? 'POP!  Right in the pocket' : `CAUGHT!  ${where}`;
     if (this.streak >= 3) msg = `${this.spot === 'pocket' ? 'POP!' : 'CAUGHT!'}  ${this.streak} in a row`;
+    if (this.tut) {
+      this.message(TUT_CAUGHT[Math.min(this.tut.done, 2)], COLORS.good, CFG.feedbackDelay);
+      this.tut.done++;
+      this.tut.fails = 0;
+      return;
+    }
     this.message(`${msg}  |  ${ump}`, COLORS.good, CFG.feedbackDelay);
   }
 
   missed(why) {
+    this.diagnostics?.recordEvent(why, { why, pitch: this.currentPitch?.name });
     this.state = 'feedback';
     this.timer = CFG.feedbackDelay;
     this.held = false;
-    this.misses++;
+    if (!this.tut) this.misses++;
     this.streak = 0;
     this.zone.visible = false;
-    const ump = this.callIt(false);
+    let ump = '';
+    if (this.tut) this.target.visible = false;
+    else ump = this.callIt(false);
     this.sound.missed();
     this.reaction = 'shrug';
     this.lastResult = why;
@@ -515,7 +623,13 @@ export class GameSystem extends createSystem({}) {
     else if (this.nearest < CFG.nearMiss) msg = `Just missed: ${Math.max(1, Math.round(this.nearest * 100))} cm`;
     else if (this.lastFocus !== null && this.focus.lostAt !== null) msg = `Eyes left it at ${Math.max(1, Math.round(this.focus.lostAt))} m`;
     if (why === 'missed' && this.pitchType.flutter) msg += '  (it danced)';
-    this.message(why === 'missed' ? `${msg}  |  ${ump}` : msg, COLORS.bad, CFG.feedbackDelay);
+    if (this.tut) {
+      this.tut.fails++;
+      if (why === 'bare') msg = 'Use the mitt, not your bare hand';
+      else if (why === 'back') msg = 'Face the mitt to the pitcher';
+      else msg = this.tut.fails > 1 ? 'Mitt in the gold ring, then wait' : 'Not quite. Mitt to the ring';
+    }
+    this.message(why === 'missed' && !this.tut ? `${msg}  |  ${ump}` : msg, COLORS.bad, CFG.feedbackDelay);
     if (why === 'bare') {
       // Knocked away off the bare hand.
       this.vel.set(this.vel.x * 0.3 + (Math.random() - 0.5) * 3, 2.5, -Math.abs(this.vel.z) * 0.25);
@@ -530,7 +644,7 @@ export class GameSystem extends createSystem({}) {
   endFocus() {
     const f = this.focus.focus;
     this.lastFocus = f;
-    if (f !== null) {
+    if (f !== null && !this.tut) {
       this.focusSum += f;
       this.focusCount++;
     }
@@ -538,10 +652,30 @@ export class GameSystem extends createSystem({}) {
     setFocusGlow(this.ball, false);
   }
 
+  // Practice pitch over: another one, or (three caught, or five misses in a row) the real round.
+  afterTutorialPitch() {
+    const t = this.tut;
+    this.state = 'ready';
+    this.timer = CFG.readyDelay;
+    if (t.done < CFG.tutorialPitches && t.fails < 5) return;
+    const earned = t.done >= CFG.tutorialPitches;
+    this.tut = null;
+    this.tutorialDone = true;
+    saveTutorialDone();
+    this.hud.set({ focus: null });
+    this.timer = CFG.readyDelay * 2;
+    this.sound.start();
+    this.message(earned ? `That is the drill. ${CFG.pitches} pitches. Play ball!` : 'No worries. Play ball!', COLORS.ink, this.timer);
+  }
+
   afterFeedback() {
     this.held = false;
     this.heldOutline.visible = false;
     this.ball.visible = false;
+    if (this.tut) {
+      this.afterTutorialPitch();
+      return;
+    }
     if (this.pitchNo >= CFG.pitches) {
       this.finishRound();
       return;
@@ -554,6 +688,7 @@ export class GameSystem extends createSystem({}) {
     this.state = 'over';
     this.lockout = CFG.restartLockout;
     this.marker.visible = true;
+    this.lobbyOrb.visible = this.inHeadset();
     this.swapOrb.visible = this.inHeadset();
     this.levelOrb.visible = this.inHeadset();
     this.target.visible = false;
@@ -572,7 +707,7 @@ export class GameSystem extends createSystem({}) {
     ];
     if (this.focusCount) {
       const pct = Math.round((this.focusSum / this.focusCount) * 100);
-      const how = this.focus.mode === 'eyes' ? 'eye tracking' : 'head direction';
+      const how = this.focus.simulated ? 'emulated eyes' : this.focus.mode === 'eyes' ? 'eye tracking' : 'head direction';
       lines.push({ text: `Eyes on the ball  ${pct}%  (${how})` });
     }
     lines.push({ text: `Strikes called ${this.strikes}${this.framed ? `  (${this.framed} framed)` : ''}   |   ${this.level.name}` });
@@ -593,7 +728,7 @@ export class GameSystem extends createSystem({}) {
     this.paused = this.world.visibilityState.peek() === VisibilityState.VisibleBlurred;
     if (this.paused) return;
     const inHeadset = this.inHeadset();
-    this.desktop.update();
+    this.desktop.update(this.player);
     this.glove.hold = this.held ? 1 : 0;
     this.glove.update(this.player, this.desktop, inHeadset, dt);
     this.focus.sample(this.player, this.world.camera, inHeadset);
@@ -636,6 +771,10 @@ export class GameSystem extends createSystem({}) {
         this.updateMenu();
         break;
       case 'ready':
+        if (this.tut && this.tut.stage === 'raise') {
+          this.updateRaise(dt);
+          break;
+        }
         this.timer -= dt;
         if (this.timer <= 0 && this.pitcher.isSet && !this.reaction) this.callPitch();
         break;
@@ -661,6 +800,28 @@ export class GameSystem extends createSystem({}) {
       if (this.messageTimer <= 0 && this.state !== 'over') this.hud.set({ message: '' });
     }
     this.marker.rotation.y += dt;
+
+    if (this.diagnostics) {
+      const leftGrip = this.player?.gripSpaces?.left;
+      const rightGrip = this.player?.gripSpaces?.right;
+      this.diagnostics.update({
+        gameState: this.state,
+        glove: {
+          side: this.glove.side,
+          squeeze: this.glove.squeeze,
+          pocket: this.glove.pocket,
+        },
+        hands: {
+          left: { tracked: !!leftGrip?.visible, palm: leftGrip?.position },
+          right: { tracked: !!rightGrip?.visible, palm: rightGrip?.position },
+        },
+        gaze: {
+          mode: this.focus.mode,
+          focus: this.focus.focus,
+          watching: this.focus.watching,
+        },
+      });
+    }
   }
 
   // Touch the green ball (with either hand or the mitt) to start; the gold orb swaps hands.
@@ -679,6 +840,10 @@ export class GameSystem extends createSystem({}) {
     for (const p of points) {
       if (this.lockout <= 0 && p.distanceTo(this.marker.position) < START_RADIUS) {
         this.startRound();
+        return;
+      }
+      if (this.lockout <= 0 && p.distanceTo(this.lobbyOrb.position) < START_RADIUS) {
+        window.location.href = `${window.location.protocol}//${window.location.hostname}:8080`;
         return;
       }
     }

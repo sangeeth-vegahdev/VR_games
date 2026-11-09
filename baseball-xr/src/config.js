@@ -3,7 +3,13 @@
 const params = new URLSearchParams(globalThis.location?.search ?? '');
 const pitchesOverride = Number(params.get('pitches'));
 
+// First-time practice: three slow, easy pitches before the real round. `?tutorial=0` skips it (tests).
+const skipTutorial = params.get('tutorial') === '0';
+
 export const CFG = {
+  skipTutorial,
+  tutorialPitches: 3, // catches needed to finish the practice
+  tutorialSpeed: 11, // m/s for the first practice pitch (25 mph); each next one is a little quicker
   // A round is 25 pitches. `?pitches=N` in the URL overrides it (handy for quick tests).
   pitches: Number.isInteger(pitchesOverride) && pitchesOverride > 0 ? pitchesOverride : 25,
   rampPitches: 18, // speed and movement climb over this many pitches, then hold (see src/pitches.js)

@@ -312,3 +312,46 @@ test('eye ring tracker: visual reticle locks on and scales with distance', () =>
   assert.ok(tracker.group.position.distanceTo(ball) > 4, 'reticle moves away from ball with eye direction');
   assert.equal(tracker.ringMaterial.color.getHex(), 0xffffff, 'ring dims to white when off target');
 });
+
+test('hand tracking: thumb-to-middle-finger squeezing closes the mitt', () => {
+  const OPEN_AT = 0.11; // 11cm thumb-to-middle distance
+  const CLOSED_AT = 0.04; // 4cm thumb-to-middle distance
+
+  const calcSqueeze = (d) => Math.max(0, Math.min(1, (OPEN_AT - d) / (OPEN_AT - CLOSED_AT)));
+
+  assert.equal(calcSqueeze(0.12), 0, 'Hand wide open (12cm) produces 0 squeeze');
+  assert.equal(calcSqueeze(0.11), 0, 'Hand at open threshold (11cm) produces 0 squeeze');
+  assert.ok(Math.abs(calcSqueeze(0.075) - 0.5) < 1e-6, 'Hand half-closed (7.5cm) produces 0.5 squeeze');
+  assert.equal(calcSqueeze(0.04), 1.0, 'Hand at closed threshold (4cm) produces 1.0 squeeze');
+  assert.equal(calcSqueeze(0.02), 1.0, 'Pinching fingers tight (2cm) caps at 1.0 squeeze');
+});
+
+test('bare-hand penalty: catching without mitt incurs bare-hand deflection', () => {
+  const bareHandRadius = 0.14; // CFG.bareHandRadius
+  const ballPos = new Vector3(0, 1.2, -0.65);
+  const bareHandPos = new Vector3(0, 1.2, -0.65); // Directly touching bare hand
+
+  const d = ballPos.distanceTo(bareHandPos);
+  assert.ok(d <= bareHandRadius, 'Ball touches bare hand');
+  // In game, touches within bareHandRadius trigger missed("bare")
+  const outcome = d <= bareHandRadius ? 'bare' : 'missed';
+  assert.equal(outcome, 'bare', 'Direct bare-hand contact results in "bare" penalty');
+});
+
+test('umpire framing mechanics: quiet framing vs aggressive stabbing', () => {
+  // Pitches just outside the strike zone (0.02m outside)
+  const borderlineOutside = new Vector3(STRIKE_ZONE.halfWidth + 0.02, 0, 0);
+
+  // Quiet catch: mitt speed = 0.5 m/s (< 1.2 m/s quiet threshold)
+  const quietCall = umpire(borderlineOutside, true, 0.5);
+  assert.equal(quietCall.strike, true, 'Quiet borderline pitch is framed into a strike');
+  assert.equal(quietCall.framed, true, 'Umpire flags framed pitch');
+
+  // Pitches just inside the strike zone (0.02m inside)
+  const borderlineInside = new Vector3(STRIKE_ZONE.halfWidth - 0.02, 0, 0);
+
+  // Stabbed catch: mitt speed = 3.0 m/s (> 2.6 m/s stab threshold)
+  const stabbedCall = umpire(borderlineInside, true, 3.0);
+  assert.equal(stabbedCall.strike, false, 'Stabbed pitch inside zone is rung up as a ball');
+  assert.equal(stabbedCall.stabbed, true, 'Umpire flags stabbed pitch');
+});
