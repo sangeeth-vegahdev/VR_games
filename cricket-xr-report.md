@@ -1,6 +1,6 @@
 # QA Test Report: Cricket Catch (WebXR)
 
-**Date:** 2026-11-05T18:19:24.874Z  
+**Date:** 2026-11-09T13:19:56.334Z  
 **SDK Version:** @iwsdk/core@1.1.0-rc.2  
 **Target Profile:** Meta Quest 3 (via IWER emulation)  
 
@@ -23,13 +23,13 @@
 | TEST_2_WEBXR_SESSION | WebXR Immersive-VR Session Initialization | Active XR session with hand input mode | Active | **PASS** |
 | TEST_3_HAND_TRACKING | Dual Hand Joint Tracking & Recovery | Both hands tracked, loss detected, recovered | PASS | **PASS** |
 | TEST_GAZE_FALLBACK | Gaze Input Source Classification (Quest 3 Fallback) | Mode is head (fallback), not false eye tracking | head | **PASS** |
-| TEST_4_CRICKET_GAMEPLAY | Catch Detection (Frontal, Back-of-Hand, Two-Handed) | Frontal catch, deflection on back-hand, 2-handed lock | All Verified | **PASS** |
-| TEST_7_DIAGNOSTICS_PANEL | Developer Diagnostics Panel Telemetry | Live telemetry with FPS, frame times, and tracking | FPS: 48, Avg: 20.79ms | **PASS** |
+| TEST_4_CRICKET_GAMEPLAY | Catch Detection (Frontal, Back-of-Hand, Two-Handed, High W-Cup, Low Cup) | All catches and deflections verified | All Verified | **PASS** |
+| TEST_7_DIAGNOSTICS_PANEL | Developer Diagnostics Panel Telemetry | Live telemetry with FPS, frame times, and tracking | FPS: 7, Avg: 136.04ms | **PASS** |
 
 ## Performance & Latency Metrics
 
-- **Average FPS:** 48
-- **Average Frame Time:** 20.79 ms
-- **95th Percentile Frame Time:** 38.3 ms
-- **Peak Frame Time:** 79.4 ms
+- **Average FPS:** 7
+- **Average Frame Time:** 136.04 ms
+- **95th Percentile Frame Time:** 195.1 ms
+- **Peak Frame Time:** 195.1 ms
 - **Note on Latency:** JavaScript response time is < 0.2ms per collision check. Physical camera-to-photon latency (~15-22ms) requires physical Meta Quest headset verification.

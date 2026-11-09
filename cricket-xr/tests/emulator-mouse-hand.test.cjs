@@ -3,8 +3,8 @@
 // Usage: GAME_URL=https://localhost:8082 node tests/emulator-mouse-hand.test.cjs   (cricket: 8081)
 const { chromium } = require('playwright');
 
-const GAME_URL = process.env.GAME_URL || 'https://localhost:8082';
-const CRICKET = GAME_URL.includes('8081');
+const GAME_URL = process.env.GAME_URL || 'https://localhost:8085';
+const CRICKET = GAME_URL.includes('8081') || GAME_URL.includes('8085') || !GAME_URL.includes('8082');
 
 (async () => {
   const browser = await chromium.launch({

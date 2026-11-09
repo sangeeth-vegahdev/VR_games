@@ -17,17 +17,22 @@ export const CFG = {
   swingBase: 1.4, // sideways acceleration (m/s^2) for ball 1
   swingMax: 7, // faster balls are airborne for less time, so swing must grow to keep bending
   gravity: 3, // stylised, so the ball arcs gently instead of dropping like a stone
-  // A catch is the ball touching the hand: its centre within (ball radius + handMargin) of the palm.
-  // The margin covers the palm's width and the fingers, so contact is where the hand is drawn.
-  handMargin: 0.095,
+  // A catch is the ball touching the hand: its centre within reach of palm or fingers.
+  // The anatomical compound model checks palm, fingers, and thumb volumes with forearm exclusion.
+  handMargin: 0.095, // overall fallback margin for simple grip poses
+  palmRadius: 0.065, // radius of palm contact sphere
+  fingerRadius: 0.045, // radius around fingertips/phalanxes
+  cuppedBonus: 0.045, // reach bonus when cupped with two hands
+  forearmCutoff: -0.025, // reject contacts more than 2.5cm behind the wrist along the forearm
   backOfHand: -0.70, // a ball arriving this far behind the palm (cosine) glances off the back of the hand
-  settleTime: 0.09, // seconds for a caught ball to settle into the palm (no snapping)
+  settleTime: 0.14, // seconds for a caught ball to settle into the palm (cushioned, no snapping)
   twoHandGap: 0.28, // both palms within this of the ball at contact: a two-handed catch
   nearMiss: 0.4, // a miss closer than this tells you by how much
   arriveZ: -0.65, // how far in front of the player the ball arrives: comfortable arm's reach
   targetSpreadX: 0.35, // random arrival offset left/right (kept inside the headset's field of view)
-  targetSpreadY: 0.15, // random arrival offset up/down
-  chestBelowHead: 0.4, // arrival height, measured below the headset
+  targetSpreadY: 0.15, // random arrival offset up/down for chest deliveries
+  chestBelowHead: 0.4, // chest arrival height, measured below the headset
+  highCatchOffset: 0.35, // height above head for high skiers
   readyDelay: 0.9,
   feedbackDelay: 1.0,
   restartLockout: 1.0,

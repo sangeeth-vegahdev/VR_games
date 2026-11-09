@@ -90,11 +90,13 @@ export class EyeRingTracker {
     this.tempDir = new Vector3();
     this.visible = false;
     this.pulseTime = 0;
+    this._firstFrame = true;
   }
 
   show() {
     this.visible = true;
     this.group.visible = true;
+    this._firstFrame = true;
   }
 
   hide() {
@@ -130,8 +132,16 @@ export class EyeRingTracker {
     const dist = origin.distanceTo(ballPos);
     projectGazePoint(origin, dir, ballPos, this.targetPoint);
 
-    // Position tracker at gaze projection point
-    this.group.position.copy(this.targetPoint);
+    // Position tracker at gaze projection point. Snap on large gaze shifts (>0.8m) to track fast
+    // eye saccades immediately; apply subtle exponential smoothing on fine tracking to eliminate micro-jitter.
+    const gap = this.group.position.distanceTo(this.targetPoint);
+    if (this._firstFrame || gap > 0.8) {
+      this.group.position.copy(this.targetPoint);
+      this._firstFrame = false;
+    } else {
+      const smoothFactor = Math.min(1, dt * 30);
+      this.group.position.lerp(this.targetPoint, smoothFactor);
+    }
 
     // Always orient the tracker ring flat to the viewer
     this.group.lookAt(origin);

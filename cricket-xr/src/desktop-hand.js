@@ -1,5 +1,5 @@
 import { CFG } from './config.js';
-import { skin } from './hands.js';
+import { skin, trackedHands } from './hands.js';
 import {
   AssetManager,
   DoubleSide,
@@ -25,6 +25,8 @@ export class DesktopHand {
     this.position = new Vector3(0, 1.2, CATCH_PLANE_Z);
     this.active = false;
     this.seen = false; // has the pointer moved over the canvas yet?
+    const params = new URLSearchParams(globalThis.location?.search || '');
+    this.handMode = params.get('hand') || 'right'; // 'right' | 'left' | 'both'
 
     this.plane = new Plane(new Vector3(0, 0, 1), -CATCH_PLANE_Z); // the plane z = CATCH_PLANE_Z
     this.ray = new Raycaster();
@@ -64,8 +66,23 @@ export class DesktopHand {
       this.seen = true;
       this.gripKnown = false;
     };
+    const onKeyDown = (e) => {
+      if (e.key === 'h' || e.key === 'H') {
+        this.cycleHandMode();
+      }
+    };
     el.addEventListener('pointermove', onMove);
-    this.dispose = () => el.removeEventListener('pointermove', onMove);
+    el.addEventListener('keydown', onKeyDown);
+    this.dispose = () => {
+      el.removeEventListener('pointermove', onMove);
+      el.removeEventListener('keydown', onKeyDown);
+    };
+  }
+
+  cycleHandMode() {
+    if (this.handMode === 'right') this.handMode = 'left';
+    else if (this.handMode === 'left') this.handMode = 'both';
+    else this.handMode = 'right';
   }
 
   // Stands the model's right hand upright, palm towards the coach, with the palm centre at the
@@ -125,16 +142,38 @@ export class DesktopHand {
 
   update(player) {
     const inSession = !!this.world.session;
-    if (this.seen && inSession && this.controllerMoved(player)) this.seen = false;
+    // Check if live XR hands or controllers are actively providing input
+    const liveHandsPresent = inSession && player && player.gripSpaces &&
+      (player.gripSpaces.left?.visible || player.gripSpaces.right?.visible ||
+       (trackedHands.left?.joints?.wrist && trackedHands.left?.mesh?.visible) ||
+       (trackedHands.right?.joints?.wrist && trackedHands.right?.mesh?.visible));
+
+    if (inSession && liveHandsPresent) {
+      // In active WebXR session with live or emulated XR hands:
+      // Real WebXR hand tracking takes full priority. Never let the mouse hijack or hide hands.
+      this.active = false;
+      this.seen = false;
+      this.marker.visible = false;
+      if (this.hand) this.hand.visible = false;
+      if (trackedHands.left && trackedHands.left.mesh) trackedHands.left.mesh.visible = true;
+      if (trackedHands.right && trackedHands.right.mesh) trackedHands.right.mesh.visible = true;
+      return;
+    }
+
+    if (this.seen && inSession && this.controllerMoved(player)) {
+      this.seen = false;
+    }
     if (!this.seen) {
       this.active = false;
       this.marker.visible = false;
       if (this.hand) this.hand.visible = false;
+      if (trackedHands.left && trackedHands.left.mesh) trackedHands.left.mesh.visible = true;
+      if (trackedHands.right && trackedHands.right.mesh) trackedHands.right.mesh.visible = true;
       return;
     }
     if (inSession) {
-      // In the emulator the page camera is the headset, so map the pointer straight to a reach area:
-      // across +-1.2 m, and from 0.3 m (low catch) up to 2.2 m (high catch).
+      // Flat preview in emulator when no hands are connected:
+      // Map pointer across comfortable catch zone: +-1.2m left/right and 0.25m up to 2.2m
       this.position.set(this.ndc.x * 1.2, 1.25 + this.ndc.y * 0.95, CATCH_PLANE_Z);
       if (this.hand) this.hand.scale.setScalar(1);
     } else {
@@ -142,7 +181,7 @@ export class DesktopHand {
       if (this.ray.ray.intersectPlane(this.plane, this.hit)) {
         this.position.set(
           Math.min(1.5, Math.max(-1.5, this.hit.x)),
-          Math.min(2.4, Math.max(0.3, this.hit.y)),
+          Math.min(2.4, Math.max(0.25, this.hit.y)),
           CATCH_PLANE_Z,
         );
       }
@@ -154,6 +193,11 @@ export class DesktopHand {
     if (this.hand) {
       this.hand.position.copy(this.position);
       this.hand.visible = true;
+    }
+    // Only in desktop mode when no XR session is active, hide stationary dummy hand models
+    if (!inSession) {
+      if (trackedHands.left && trackedHands.left.mesh) trackedHands.left.mesh.visible = false;
+      if (trackedHands.right && trackedHands.right.mesh) trackedHands.right.mesh.visible = false;
     }
   }
 }

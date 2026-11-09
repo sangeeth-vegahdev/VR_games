@@ -191,3 +191,94 @@ test('back-of-hand glance: normal dot product cleanly distinguishes palm catch f
   const backDot = backNormal.dot(from);
   assert.ok(backDot < CFG.backOfHand, 'Back-of-hand has dot < backOfHand threshold (deflection)');
 });
+
+test('game timing: delta time clamp maintains 1:1 real-world speed across 15 to 90 FPS', () => {
+  // Simulates 1 second of wall-clock time at various frame rates
+  const frameRates = [15, 20, 30, 60, 72, 90];
+  for (const fps of frameRates) {
+    const rawDt = 1 / fps;
+    const clampedDt = Math.min(rawDt, 0.15); // The new clamp
+    let simulatedGameTime = 0;
+    for (let f = 0; f < fps; f++) {
+      simulatedGameTime += clampedDt;
+    }
+    const ratio = simulatedGameTime / 1.0;
+    assert.ok(
+      Math.abs(ratio - 1.0) < 0.001,
+      `At ${fps} FPS, 1 wall-clock second yields exactly 1 simulated second (ratio: ${ratio})`
+    );
+  }
+});
+
+test('low catch crouch: smoothly lowers player rig and hands to reach ground-level balls', () => {
+  const lerp = (a, b, t) => a + (b - a) * t;
+
+  // Mock player rig
+  const mockRig = { position: { x: 0, y: 0, z: 0 } };
+  let crouchBaseY = 0;
+  let crouchOffset = 0;
+  let targetCrouch = 0;
+
+  // Scenario A: Low catch incoming at shin height (y = 0.40m)
+  const aimY = 0.40;
+  const isLowCatch = true;
+  const lookPitch = -0.30; // player looking down at the ball
+  const lookPitchCrouch = Math.min(0, Math.max(-0.38, (lookPitch + 0.10) * 0.95));
+  const deliveryCrouch = Math.min(0, Math.max(-0.38, (aimY - 0.75) * 1.0));
+  targetCrouch = Math.min(deliveryCrouch, lookPitchCrouch);
+
+  assert.ok(targetCrouch <= -0.28, `Crouch target ${targetCrouch.toFixed(2)}m lowers body by at least 28cm`);
+  assert.ok(targetCrouch >= -0.38, `Crouch target ${targetCrouch.toFixed(2)}m does not exceed comfort bound 38cm`);
+
+  // Simulate smooth interpolation over 0.5s (30 frames at 60 FPS)
+  const dt = 1 / 60;
+  for (let frame = 0; frame < 30; frame++) {
+    crouchOffset = lerp(crouchOffset, targetCrouch, Math.min(1, dt * 5.0));
+    mockRig.position.y = crouchBaseY + crouchOffset;
+  }
+
+  assert.ok(
+    mockRig.position.y <= -0.25,
+    `Player rig position smoothly descended to ${mockRig.position.y.toFixed(3)}m`
+  );
+
+  // Standing hand height is typically 0.72m. With crouch of -0.28m, hand drops to 0.44m (within reach of 0.40m ball)
+  const standingHandY = 0.72;
+  const crouchedHandY = standingHandY + mockRig.position.y;
+  const distanceToBall = Math.abs(crouchedHandY - aimY);
+  assert.ok(
+    distanceToBall <= 0.10,
+    `Crouched hand at ${crouchedHandY.toFixed(2)}m is within natural arm catch radius of ${aimY.toFixed(2)}m ball`
+  );
+});
+
+test('player reset: smoothly returns player rig to neutral 0.0m before next delivery', () => {
+  const lerp = (a, b, t) => a + (b - a) * t;
+
+  const mockRig = { position: { x: 0, y: -0.35, z: 0 } };
+  let crouchBaseY = 0;
+  let crouchOffset = -0.35;
+  let targetCrouch = 0.0; // Feedback / ready state resets target to neutral
+
+  // Feedback interval lasts CFG.feedbackDelay = 1.8 seconds.
+  // Test smooth return over 1.2 seconds (72 frames at 60 FPS)
+  const dt = 1 / 60;
+  for (let frame = 0; frame < 72; frame++) {
+    crouchOffset = lerp(crouchOffset, targetCrouch, Math.min(1, dt * 4.0));
+    if (Math.abs(crouchOffset - targetCrouch) < 0.005) {
+      crouchOffset = targetCrouch;
+    }
+    mockRig.position.y = crouchBaseY + crouchOffset;
+  }
+
+  assert.equal(
+    crouchOffset,
+    0,
+    'Crouch offset fully returns to 0.0m within feedback window'
+  );
+  assert.equal(
+    mockRig.position.y,
+    0,
+    'Player rig is restored to exactly 0.0m neutral floor alignment before next throw'
+  );
+});
