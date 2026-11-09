@@ -1,58 +1,62 @@
 {
+  "totalFrames": 720,
   "fps": 24,
   "events": [
     {
-      "type": "ui",
-      "frame": 60
+      "frame": 23,
+      "type": "ui"
     },
     {
-      "type": "hit",
-      "frame": 102
+      "frame": 54,
+      "type": "hit"
     },
     {
-      "type": "caught",
-      "frame": 134
+      "frame": 81,
+      "type": "caught"
     },
     {
-      "type": "hit",
-      "frame": 198
+      "frame": 133,
+      "type": "hit"
     },
     {
-      "type": "caught",
-      "frame": 229
+      "frame": 160,
+      "type": "missed"
     },
     {
-      "type": "hit",
-      "frame": 293
+      "frame": 212,
+      "type": "hit"
     },
     {
-      "type": "missed",
-      "frame": 325
+      "frame": 254,
+      "type": "caught"
     },
     {
-      "type": "hit",
-      "frame": 389
+      "frame": 306,
+      "type": "hit"
     },
     {
-      "type": "caught",
-      "frame": 418
+      "frame": 330,
+      "type": "caught"
     },
     {
-      "type": "hit",
-      "frame": 482
+      "frame": 382,
+      "type": "hit"
     },
     {
-      "type": "caught",
-      "frame": 510
+      "frame": 424,
+      "type": "caught"
     },
     {
-      "type": "hit",
-      "frame": 574
+      "frame": 476,
+      "type": "hit"
     },
     {
-      "type": "caught",
-      "frame": 601
+      "frame": 498,
+      "type": "caught"
+    },
+    {
+      "frame": 518,
+      "type": "over"
     }
-  ],
-  "totalFrames": 710
+  ]
 }

@@ -1,0 +1,38 @@
+{
+  "totalFrames": 720,
+  "fps": 24,
+  "events": [
+    {
+      "frame": 23,
+      "type": "start"
+    },
+    {
+      "frame": 98,
+      "type": "caught"
+    },
+    {
+      "frame": 207,
+      "type": "caught"
+    },
+    {
+      "frame": 316,
+      "type": "caught"
+    },
+    {
+      "frame": 443,
+      "type": "missed"
+    },
+    {
+      "frame": 552,
+      "type": "caught"
+    },
+    {
+      "frame": 659,
+      "type": "caught"
+    },
+    {
+      "frame": 681,
+      "type": "over"
+    }
+  ]
+}

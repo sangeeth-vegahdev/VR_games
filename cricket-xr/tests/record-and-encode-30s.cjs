@@ -33,7 +33,7 @@ const BALLS = 6;
     viewport: { width: W, height: H },
   });
 
-  await page.goto(`https://localhost:8081/?balls=${BALLS}`);
+  await page.goto(`https://localhost:8081/?balls=${BALLS}&tutorial=0`);
   await page.waitForFunction(() => window.__game && window.__world, null, { timeout: 40000 });
 
   // Enter WebXR mode with hand tracking
@@ -90,22 +90,37 @@ const BALLS = 6;
       }
     };
 
+    window.__lookAtBall = (bIdx, plan) => {
+      const b = s.ball.position;
+      const flying = s.state === 'swinging' || s.state === 'flying';
+      const curPlan = plan && plan[bIdx] ? plan[bIdx] : null;
+      if (flying) {
+        if (curPlan && curPlan.catch === false && b.z > -4) {
+          d.remote.dispatch('look_at', { device: 'headset', target: { x: b.x + 2, y: b.y + 0.8, z: b.z } });
+        } else {
+          d.remote.dispatch('look_at', { device: 'headset', target: { x: b.x, y: b.y, z: b.z } });
+        }
+      } else {
+        d.remote.dispatch('look_at', { device: 'headset', target: { x: 0, y: 1.05, z: -3.5 } });
+      }
+    };
+
     // Track audio events for exact synchronization
     window.__audioEvents = [];
     window.__currentFrame = 0;
 
-    const origPlay = s.sound.play.bind(s.sound);
-    s.sound.play = (name) => {
+    const origFile = s.sound.file ? s.sound.file.bind(s.sound) : () => false;
+    s.sound.file = (name, vol) => {
       const typeMap = {
-        'hit.ogg': 'hit',
-        'confirm.ogg': 'caught',
-        'hurt.ogg': 'missed',
-        'ui.ogg': 'ui',
-        'level_up.ogg': 'over',
+        hit: 'hit',
+        coin: 'caught',
+        hurt: 'missed',
+        ui: 'ui',
+        level: 'over',
       };
       const type = typeMap[name] || 'ui';
       window.__audioEvents.push({ frame: window.__currentFrame, type });
-      return origPlay(name);
+      return origFile(name, vol);
     };
 
     // Step function for precise 24 FPS
@@ -117,14 +132,26 @@ const BALLS = 6;
   await page.evaluate(() => window.__moveHands());
   await page.waitForTimeout(600);
 
+  // Target 720 frames (30.0s @ 24 FPS)
+  const MAX_FRAMES = 720;
+  const ballPlan = [
+    { catch: true, high: false, hand: 'right' },  // Ball 1: Fast slip catch
+    { catch: false, high: false, hand: 'none' },   // Ball 2: Dropped catch (showing coach shrug)
+    { catch: true, high: true, hand: 'cup' },     // Ball 3: Lofted High Skier (High Catch!)
+    { catch: true, high: false, hand: 'left' },   // Ball 4: Fast swing catch on left hand
+    { catch: true, high: false, hand: 'right' },  // Ball 5: Clean right hand catch
+    { catch: true, high: false, hand: 'right' },  // Ball 6: Final winning catch
+  ];
+
   let frameNo = 0;
-  const shot = async () => {
-    await page.evaluate((fn) => {
+  const shot = async (bIdx = 0) => {
+    await page.evaluate(({ fn, bIdx, plan }) => {
       window.__currentFrame = fn;
       window.__moveHands();
+      window.__lookAtBall(bIdx, plan);
       return window.__frame();
-    }, frameNo);
-    const filename = `f${String(frameNo++).padStart(4, '0')}.png`;
+    }, { fn: frameNo++, bIdx, plan: ballPlan });
+    const filename = `f${String(frameNo - 1).padStart(4, '0')}.png`;
     await page.screenshot({ path: path.join(OUT, filename) });
   };
 
@@ -138,17 +165,6 @@ const BALLS = 6;
     s.lockout = 0;
     s.tryStart();
   });
-
-  // Target 720 frames (30.0s @ 24 FPS)
-  const MAX_FRAMES = 720;
-  let ballPlan = [
-    { catch: true, high: false, hand: 'right' },  // Ball 1: Fast slip catch
-    { catch: false, high: false, hand: 'none' },   // Ball 2: Dropped catch (showing coach shrug)
-    { catch: true, high: true, hand: 'cup' },     // Ball 3: Lofted High Skier (High Catch!)
-    { catch: true, high: false, hand: 'left' },   // Ball 4: Fast swing catch on left hand
-    { catch: true, high: false, hand: 'right' },  // Ball 5: Clean right hand catch
-    { catch: true, high: false, hand: 'right' },  // Ball 6: Final winning catch
-  ];
 
   console.log('Recording active gameplay frames...');
   while (frameNo < MAX_FRAMES) {
@@ -205,7 +221,7 @@ const BALLS = 6;
       };
     }, ballPlan);
 
-    await shot();
+    await shot(state.ballNo ? state.ballNo - 1 : 0);
 
     if (frameNo % 100 === 0) {
       console.log(` -> Frame ${frameNo}/${MAX_FRAMES} (Ball ${state.ballNo}/${BALLS}, Score: ${state.score}, Missed: ${state.misses})`);
