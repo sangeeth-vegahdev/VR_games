@@ -336,11 +336,14 @@ export class GameSystem extends createSystem({}) {
       }
     }
 
-    // Arrival point: high skier, dipping low catch near knee/shin, or chest/waist
+    // Arrival point: high skier, dipping low catch, or chest/waist
     (this.world.session ? this.player.head : this.world.camera).getWorldPosition(this.head);
     let targetY;
     if (this.isLowCatch) {
-      targetY = 0.62 + (Math.random() * 2 - 1) * 0.08;
+      // Low dipping catch: relative to player's head (waist/thigh level) so it stays inside
+      // Quest tracking cameras' FOV. Clamped to at least 0.72m for seated players.
+      const lowBase = Math.max(0.72, this.head.y - 0.65);
+      targetY = lowBase + (Math.random() * 2 - 1) * 0.06;
     } else {
       targetY = this.head.y - CFG.chestBelowHead + (tut ? 0 : (Math.random() * 2 - 1) * CFG.targetSpreadY);
     }
@@ -422,6 +425,14 @@ export class GameSystem extends createSystem({}) {
     }
     this.aimRing.visible = false;
     this.eyeTracker.hide();
+    const session = this.world.session;
+    if (session && session.inputSources) {
+      for (const source of session.inputSources) {
+        if (source.gamepad && source.gamepad.hapticActuators && source.gamepad.hapticActuators[0]) {
+          source.gamepad.hapticActuators[0].pulse(0.8, 45);
+        }
+      }
+    }
     this.fx.burst(this.ball.position); // at the point of contact
     this.sound.caught();
     this.coach.cheer();
@@ -716,7 +727,9 @@ export class GameSystem extends createSystem({}) {
       // Contact: the ball touches a hand when its centre comes within (its radius + the hand's margin) of
       // the palm. The test is swept between frames, relative to the hand, so neither a fast ball nor a
       // fast hand can pass through the other between two frames.
-      const reach = BALL_RADIUS * this.ball.scale.x + CFG.handMargin;
+      // Cupped hands boost: fielders naturally cup both palms together to receive swinging or dipping balls.
+      const isCupped = this.palmOk.left && this.palmOk.right && this.palm.left.distanceTo(this.palm.right) <= CFG.twoHandGap;
+      const reach = BALL_RADIUS * this.ball.scale.x + CFG.handMargin + (isCupped ? 0.045 : 0);
       let hit = null;
       let hitD = Infinity;
       let hitBack = false;

@@ -70,3 +70,4 @@ Tested in Meta IWER emulator (Quest 3 profile) and desktop browsers. Tested on a
 ## Credits
 
 Pitcher: CC0 Quaternius Universal Base Characters. Mitt: custom low-poly mesh. Sounds: Web Audio API synthesis. Hand model: WebXR Input Profiles (MIT).
+

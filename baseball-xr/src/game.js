@@ -573,6 +573,15 @@ export class GameSystem extends createSystem({}) {
     const speed = this.vel.length();
     if (speed > 0) this.glove.impact(this.tmp.copy(this.vel).divideScalar(speed), speed);
     this.fx.dust(this.ball.position, this.glove.normal, this.spot === 'pocket' ? 1 : 0.6);
+    const session = this.world.session;
+    if (session && session.inputSources) {
+      for (const source of session.inputSources) {
+        if (source.gamepad && source.gamepad.hapticActuators && source.gamepad.hapticActuators[0]) {
+          const intensity = Math.min(1.0, 0.6 + speed / 60);
+          source.gamepad.hapticActuators[0].pulse(intensity, 45);
+        }
+      }
+    }
     if (!this.tut) {
       this.catches++;
       this.streak++;
@@ -911,7 +920,10 @@ export class GameSystem extends createSystem({}) {
         const d = this.sweep(this.prevBareOk ? this.prevBare : hand, hand);
         this.prevBare.copy(hand);
         this.prevBareOk = true;
-        if (d <= CFG.bareHandRadius) {
+        // Natural catcher technique: throwing hand is kept near/behind the mitt to trap the ball.
+        // Only penalize if the bare hand is far from the mitt pocket (>0.32m), i.e. swatted bare-handed.
+        const nearMitt = g.ok && hand.distanceTo(g.pocket) < 0.32;
+        if (!nearMitt && d <= CFG.bareHandRadius) {
           this.ball.position.copy(hand).add(this.closest);
           this.missed('bare');
           return;

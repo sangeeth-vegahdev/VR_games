@@ -19,7 +19,7 @@ export const CFG = {
   // A catch is the ball's centre arriving within catchRadius of the pocket's centre: inside the mitt's
   // face (about 28 cm across its binding), coming in from the front. Swept between frames, with the mitt.
   catchRadius: 0.14,
-  backOfMitt: -0.3, // arriving this far behind the pocket (cosine) it glances off the back of the mitt
+  backOfMitt: -0.65, // arriving this far behind the pocket (cosine) it glances off the back of the mitt
   settleTime: 0.06, // seconds for a caught ball to settle into the pocket (no snapping)
   nearMiss: 0.4, // a miss closer than this tells you by how much
   bareHandRadius: 0.1, // ball centre to the bare palm (ball radius plus the hand): "use the mitt"

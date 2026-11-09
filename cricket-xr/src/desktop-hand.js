@@ -117,7 +117,7 @@ export class DesktopHand {
       const g = player.gripSpaces[side];
       if (g && g.visible) this.gripSum.add(g.getWorldPosition(this.tmp));
     }
-    const moved = this.gripKnown && this.gripSum.distanceTo(this.gripPrev) > 0.03;
+    const moved = this.gripKnown && this.gripSum.distanceTo(this.gripPrev) > 0.06;
     this.gripPrev.copy(this.gripSum);
     this.gripKnown = true;
     return moved;
