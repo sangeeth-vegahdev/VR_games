@@ -1,8 +1,9 @@
-# Builds both games and publishes them to GitHub Pages (HTTPS, which WebXR requires):
+# Builds the games and publishes them to GitHub Pages (HTTPS, which WebXR requires):
 #   Cricket Catch      at  https://<user>.github.io/<repo>/
 #   Glove Up (baseball) at https://<user>.github.io/<repo>/baseball/
+#   Bulb Rush          at  https://<user>.github.io/<repo>/bulb/
 # One-time setup: repo Settings > Pages > Build and deployment > Source: "GitHub Actions".
-# It runs when either game changes on main, or by hand from the Actions tab.
+# It runs when a game changes on main, or by hand from the Actions tab.
 name: Deploy the games to GitHub Pages
 
 on:
@@ -11,6 +12,7 @@ on:
     paths:
       - 'cricket-xr/**'
       - 'baseball-xr/**'
+      - 'bulb-rush-xr/**'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
@@ -35,6 +37,7 @@ jobs:
           cache-dependency-path: |
             cricket-xr/package-lock.json
             baseball-xr/package-lock.json
+            bulb-rush-xr/package-lock.json
       - name: Build Cricket Catch
         working-directory: cricket-xr
         run: |
@@ -45,9 +48,16 @@ jobs:
         run: |
           npm ci --ignore-scripts
           npm run build
-      # Both builds use relative paths (vite base './'), so the baseball game works from a sub-folder.
-      - name: Put the baseball game under /baseball/
-        run: cp -r baseball-xr/dist cricket-xr/dist/baseball
+      - name: Build Bulb Rush
+        working-directory: bulb-rush-xr
+        run: |
+          npm ci --ignore-scripts
+          npm run build
+      # All builds use relative paths (vite base './'), so each game works from a sub-folder.
+      - name: Put the other games in their sub-folders
+        run: |
+          cp -r baseball-xr/dist cricket-xr/dist/baseball
+          cp -r bulb-rush-xr/dist cricket-xr/dist/bulb
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
