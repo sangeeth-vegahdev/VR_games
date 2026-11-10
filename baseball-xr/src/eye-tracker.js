@@ -28,8 +28,7 @@ const BASE_ANGULAR_SCALE = 0.32;  // ring is sized by visual angle: outer radius
 const MIN_SCALE = 0.05;        // floor so it never collapses right at the glove/hands
 
 export function projectGazePoint(origin, dir, targetPos, out = new Vector3()) {
-  const dist = origin.distanceTo(targetPos);
-  return out.copy(origin).addScaledVector(dir, dist);
+  return out.copy(targetPos);
 }
 
 export class EyeRingTracker {
@@ -48,7 +47,7 @@ export class EyeRingTracker {
       depthWrite: false,
       depthTest: false, // never hidden behind the ball, dust or turf
     });
-    // Base geometry: 0.08 inner, 0.098 outer radius
+    // Base geometry: 0.07 inner, 0.098 outer radius
     this.ringMesh = new Mesh(new RingGeometry(0.07, 0.098, 48), this.ringMaterial);
     this.group.add(this.ringMesh);
 
@@ -90,11 +89,13 @@ export class EyeRingTracker {
     this.tempDir = new Vector3();
     this.visible = false;
     this.pulseTime = 0;
+    this._firstFrame = true;
   }
 
   show() {
     this.visible = true;
     this.group.visible = true;
+    this._firstFrame = true;
   }
 
   hide() {
@@ -123,15 +124,24 @@ export class EyeRingTracker {
     if (!inHeadset && desktop && desktop.active) {
       camera.getWorldPosition(this.tempOrigin);
       origin = this.tempOrigin;
-      dir = desktop.ray.ray.direction;
+      dir = desktop.ray ? desktop.ray.ray.direction : focus.dir;
+    }
+
+    if ((!origin || !dir || focus.mode === 'none') && camera) {
+      camera.getWorldPosition(this.tempOrigin);
+      origin = this.tempOrigin;
+      camera.getWorldDirection(this.tempDir);
+      dir = this.tempDir;
     }
 
     // Distance from the viewer's eye to the ball
     const dist = origin.distanceTo(ballPos);
-    projectGazePoint(origin, dir, ballPos, this.targetPoint);
 
-    // Position tracker at gaze projection point
+    // The tracker ring stays exactly anchored to the baseball in 3D space:
+    // in the pitcher's throwing hand throughout windup, and following the ball in flight.
+    this.targetPoint.copy(ballPos);
     this.group.position.copy(this.targetPoint);
+    this._firstFrame = false;
 
     // Always orient the tracker ring flat to the viewer
     this.group.lookAt(origin);

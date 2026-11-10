@@ -1,4 +1,4 @@
-import { Quaternion, Vector3 } from '@iwsdk/core';
+import { Quaternion, Raycaster, Vector2, Vector3 } from '@iwsdk/core';
 import { CFG } from './config.js';
 
 // "Eyes on the ball": where is the player looking while the pitch is in the air?
@@ -11,13 +11,8 @@ import { CFG } from './config.js';
 // direction is used. The cone that counts as "watching" is wider for the head, because the eyes can
 // lead the head by several degrees.
 //
-// On a PC there is no head to track, so focus is not measured.
-
-// In the IWER desktop emulator there are no eyes. So the mouse stands in for them: wherever the mouse is
-// over the view is where the "eyes" look (no gaze mode or pointer setup needed). Real eye tracking wins
-// whenever the headset reports it.
-const EMU_HALF_FOV_X = Math.tan((38 * Math.PI) / 180);
-const EMU_HALF_FOV_Y = Math.tan((30 * Math.PI) / 180);
+// On desktop PC testing, moving the mouse aims the gaze ray across the view so tracking the ball
+// can be tested and verified smoothly with instant visual lock-on.
 
 const SEPARATION_DEG = 2.5; // a gaze ray this far off the head's forward line is real eye tracking
 
@@ -31,18 +26,39 @@ export class FocusTracker {
     this.v = new Vector3();
     this.headDir = new Vector3();
     this.q = new Quaternion();
-    this.emuX = 0; // emulator mouse, -1..1 across the view
+    this.ray = new Raycaster();
+    this.ndc = new Vector2();
+    this.emuX = 0; // -1..1 across the view
     this.emuY = 0;
     this.emuMoved = false;
     this.simulated = false; // true while the mouse is standing in for the eyes
+    this.cv = null;
+
     if (typeof window !== 'undefined' && window.addEventListener) {
       window.addEventListener('pointermove', (e) => {
-        this.emuX = (e.clientX / window.innerWidth) * 2 - 1;
-        this.emuY = -((e.clientY / window.innerHeight) * 2 - 1);
+        const cv = this.canvas();
+        const r = cv ? cv.getBoundingClientRect() : null;
+        const w = (r && r.width > 0) ? r.width : (window.innerWidth || 1);
+        const h = (r && r.height > 0) ? r.height : (window.innerHeight || 1);
+        const left = r ? r.left : 0;
+        const top = r ? r.top : 0;
+        this.ndc.x = Math.max(-1, Math.min(1, ((e.clientX - left) / w) * 2 - 1));
+        this.ndc.y = Math.max(-1, Math.min(1, -(((e.clientY - top) / h) * 2 - 1)));
+        this.emuX = this.ndc.x;
+        this.emuY = this.ndc.y;
         this.emuMoved = true;
       });
     }
     this.resetPitch();
+  }
+
+  canvas() {
+    if (!this.cv || !this.cv.isConnected) {
+      this.cv = (typeof document !== 'undefined')
+        ? (document.querySelector('#scene-container canvas') || document.querySelector('canvas'))
+        : null;
+    }
+    return this.cv;
   }
 
   resetPitch() {
@@ -55,33 +71,54 @@ export class FocusTracker {
   // Reads this frame's gaze. inHeadset: an XR session is running.
   sample(player, camera, inHeadset) {
     this.simulated = false;
-    if (!inHeadset) {
-      this.mode = 'none';
-      camera.getWorldPosition(this.origin);
-      camera.getWorldDirection(this.dir);
-      return;
-    }
-    player.head.getWorldPosition(this.origin);
-    this.headDir.set(0, 0, -1).applyQuaternion(player.head.getWorldQuaternion(this.q));
-    if (player.gazeOrigin === 'tracked' && player.eyeSpace) {
-      player.eyeSpace.getWorldPosition(this.v);
-      this.dir.set(0, 0, -1).applyQuaternion(player.eyeSpace.getWorldQuaternion(this.q));
-      if (!this.eyeSeen && this.dir.angleTo(this.headDir) > (SEPARATION_DEG * Math.PI) / 180) this.eyeSeen = true;
-      if (this.eyeSeen) {
-        this.origin.copy(this.v);
-        this.mode = 'eyes';
-        return;
+
+    // 1. Genuine hardware eye tracking (Meta Quest Pro)
+    if (inHeadset && player) {
+      player.head.getWorldPosition(this.origin);
+      this.headDir.set(0, 0, -1).applyQuaternion(player.head.getWorldQuaternion(this.q));
+      if (player.gazeOrigin === 'tracked' && player.eyeSpace) {
+        player.eyeSpace.getWorldPosition(this.v);
+        this.dir.set(0, 0, -1).applyQuaternion(player.eyeSpace.getWorldQuaternion(this.q));
+        if (!this.eyeSeen && this.dir.angleTo(this.headDir) > (SEPARATION_DEG * Math.PI) / 180) this.eyeSeen = true;
+        if (this.eyeSeen) {
+          this.origin.copy(this.v);
+          this.mode = 'eyes';
+          return;
+        }
       }
     }
-    if (typeof window !== 'undefined' && window.IWER_DEVICE && this.emuMoved) {
-      // Emulator: aim the gaze ray from the head toward the mouse position.
-      this.dir.set(this.emuX * EMU_HALF_FOV_X, this.emuY * EMU_HALF_FOV_Y, -1).normalize().applyQuaternion(this.q.copy(player.head.getWorldQuaternion(this.q)));
+
+    // 2. Desktop simulated gaze: active when testing on desktop outside XR,
+    // or inside browser XR emulator when mouse is moved to aim gaze
+    const isEmulator = typeof window !== 'undefined' && !!(window.IWER_DEVICE || window.__IWER__);
+    if ((!inHeadset || isEmulator) && this.emuMoved && camera) {
+      if (camera.isCamera) {
+        this.ndc.set(this.emuX, this.emuY);
+        this.ray.setFromCamera(this.ndc, camera);
+        this.origin.copy(this.ray.ray.origin);
+        this.dir.copy(this.ray.ray.direction).normalize();
+      } else {
+        camera.getWorldPosition(this.origin);
+        this.dir.set(0, 0, -1).applyQuaternion(camera.getWorldQuaternion(this.q));
+      }
       this.mode = 'eyes';
       this.simulated = true;
       return;
     }
-    this.dir.copy(this.headDir);
-    this.mode = 'head';
+
+    // 3. Headset without eye tracking (Meta Quest 3 fallback on physical device)
+    if (inHeadset && player && player.head) {
+      this.dir.copy(this.headDir);
+      this.mode = 'head';
+      return;
+    }
+
+    // 4. Default outside headset before mouse moves
+    if (camera) {
+      camera.getWorldPosition(this.origin);
+      this.dir.set(0, 0, -1).applyQuaternion(camera.getWorldQuaternion(this.q));
+    }
+    this.mode = 'none';
   }
 
   // Called every frame the ball is in flight. distance: ball to player, for the "looked away" note.
@@ -90,7 +127,10 @@ export class FocusTracker {
       this.watching = false;
       return;
     }
-    const cone = this.mode === 'eyes' ? CFG.focusConeEyes : CFG.focusConeHead;
+    // Generous tracking cone for desktop mouse simulation (18 deg) so players on 2D screens
+    // can follow high-speed pitches naturally and lock on easily
+    const baseCone = this.mode === 'eyes' ? CFG.focusConeEyes : CFG.focusConeHead;
+    const cone = this.simulated ? 18 : baseCone;
     const to = this.v.subVectors(ballPos, this.origin);
     this.watching = to.lengthSq() > 1e-6 && this.dir.angleTo(to) < (cone * Math.PI) / 180;
     this.flightTime += dt;
