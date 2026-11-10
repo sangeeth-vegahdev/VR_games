@@ -1,7 +1,8 @@
 # Builds the games and publishes them to GitHub Pages (HTTPS, which WebXR requires):
-#   Cricket Catch      at  https://<user>.github.io/<repo>/
-#   Glove Up (baseball) at https://<user>.github.io/<repo>/baseball/
-#   Bulb Rush          at  https://<user>.github.io/<repo>/bulb/
+#   Lobby (central hub) at  https://<user>.github.io/<repo>/
+#   Cricket Catch       at  https://<user>.github.io/<repo>/cricket/
+#   Glove Up (baseball)  at  https://<user>.github.io/<repo>/baseball/
+#   Bulb Rush           at  https://<user>.github.io/<repo>/bulb/
 # One-time setup: repo Settings > Pages > Build and deployment > Source: "GitHub Actions".
 # It runs when a game changes on main, or by hand from the Actions tab.
 name: Deploy the games to GitHub Pages
@@ -10,6 +11,7 @@ on:
   push:
     branches: [main]
     paths:
+      - 'vr-lobby/**'
       - 'cricket-xr/**'
       - 'baseball-xr/**'
       - 'bulb-rush-xr/**'
@@ -35,9 +37,15 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: |
+            vr-lobby/package-lock.json
             cricket-xr/package-lock.json
             baseball-xr/package-lock.json
             bulb-rush-xr/package-lock.json
+      - name: Build Lobby
+        working-directory: vr-lobby
+        run: |
+          npm ci --ignore-scripts
+          npm run build
       - name: Build Cricket Catch
         working-directory: cricket-xr
         run: |
@@ -54,14 +62,15 @@ jobs:
           npm ci --ignore-scripts
           npm run build
       # All builds use relative paths (vite base './'), so each game works from a sub-folder.
-      - name: Put the other games in their sub-folders
+      - name: Assemble all games into lobby directory
         run: |
-          cp -r baseball-xr/dist cricket-xr/dist/baseball
-          cp -r bulb-rush-xr/dist cricket-xr/dist/bulb
+          cp -r cricket-xr/dist vr-lobby/dist/cricket
+          cp -r baseball-xr/dist vr-lobby/dist/baseball
+          cp -r bulb-rush-xr/dist vr-lobby/dist/bulb
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: cricket-xr/dist
+          path: vr-lobby/dist
 
   deploy:
     needs: build

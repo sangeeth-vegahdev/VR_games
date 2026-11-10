@@ -430,10 +430,18 @@ export class GameSystem extends createSystem({
   // Only leave the game if the lobby is actually running; otherwise the window turns into
   // "localhost refused to connect" and the player is stranded.
   goLobby() {
-    const url = `${window.location.protocol}//${window.location.hostname}:8080/`;
-    fetch(url, { mode: 'no-cors', cache: 'no-store' })
-      .then(() => { window.location.href = url; })
-      .catch(() => this.say && this.say('Lobby is not running', COLORS.bad, 2));
+    const loc = window.location;
+    if (loc.port === '8081' || loc.port === '8082' || loc.port === '8083') {
+      const url = `${loc.protocol}//${loc.hostname}:8080/`;
+      fetch(url, { mode: 'no-cors', cache: 'no-store' })
+        .then(() => { window.location.href = url; })
+        .catch(() => this.say && this.say('Lobby is not running', COLORS.bad, 2));
+    } else {
+      const parts = loc.pathname.split('/').filter(Boolean);
+      if (parts.length > 0) parts.pop();
+      const base = parts.length > 0 ? `/${parts.join('/')}/` : '/';
+      window.location.href = `${loc.origin}${base}`;
+    }
   }
 
   // ---------------- input ----------------

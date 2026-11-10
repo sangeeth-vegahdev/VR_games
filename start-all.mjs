@@ -50,8 +50,9 @@ for (const app of APPS) {
       console.log(`[READY] ${app.name} -> https://localhost:${app.port}`);
       if (app.port === 8080 && !lobbyReady) {
         lobbyReady = true;
-        console.log('\n>>> Launching Google Chrome to https://localhost:8080 (Meta WebXR Emulator)...');
-        spawn('cmd.exe', ['/c', 'start', 'chrome', 'https://localhost:8080', '--ignore-certificate-errors'], {
+        console.log('\n>>> Launching Google Chrome with Meta WebXR Emulator (IWER)...');
+        console.log('    Opening VR Lobby (8080), Cricket Catch (8081), and Glove Up (8082)...');
+        spawn('cmd.exe', ['/c', 'start', 'chrome', 'https://localhost:8080', 'https://localhost:8081', 'https://localhost:8082', '--ignore-certificate-errors', '--allow-insecure-localhost'], {
           detached: true,
           stdio: 'ignore',
         });

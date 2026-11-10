@@ -1,12 +1,9 @@
-import { AnimatedHand, Color, MeshStandardMaterial } from '@iwsdk/core';
+import { AnimatedHand, BufferAttribute, Color, MeshStandardMaterial } from '@iwsdk/core';
 
-// Solid, softly lit hands for hand tracking.
-//
-// The SDK's default hands are outline-only and are fetched from a CDN at run time, so on a slow or
-// blocked connection the player would see no hands at all. These use the same rigged hand model
-// (generic-hand from @webxr-input-profiles/assets, MIT, see public/LICENSE-webxr-input-profiles.txt),
-// shipped with the game in public/models. The SDK still drives every finger joint from hand tracking;
-// only the look and the file location change. A little emissive keeps hands readable in the dark room.
+// Solid, softly lit hands for hand tracking with smooth wrist alpha gradient.
+// In raw WebXR models, the hand cuts off abruptly at the wrist joint with a flat circular disc.
+// We calculate vertex distance from the wrist joint and discard the flat cap vertices,
+// smoothly fading the forearm into thin air without any visible severed stump.
 
 const skin = new MeshStandardMaterial({
   color: 0xd9a483,
@@ -14,7 +11,39 @@ const skin = new MeshStandardMaterial({
   metalness: 0,
   emissive: 0x3a2418,
   emissiveIntensity: 0.6,
+  transparent: true,
+  depthWrite: true,
+  alphaTest: 0.02,
 });
+
+skin.onBeforeCompile = (shader) => {
+  shader.vertexShader = shader.vertexShader
+    .replace(
+      '#include <common>',
+      `#include <common>
+       attribute float wristDist;
+       varying float vWristDist;`
+    )
+    .replace(
+      '#include <begin_vertex>',
+      `#include <begin_vertex>
+       vWristDist = wristDist;`
+    );
+
+  shader.fragmentShader = shader.fragmentShader
+    .replace(
+      '#include <common>',
+      `#include <common>
+       varying float vWristDist;`
+    )
+    .replace(
+      '#include <dithering_fragment>',
+      `#include <dithering_fragment>
+       if (vWristDist < 0.033) discard;
+       float wristFade = smoothstep(0.033, 0.085, vWristDist);
+       gl_FragColor.a *= wristFade;`
+    );
+};
 
 // A hit lights up the hand that made it (fading back in about a third of a second).
 let glow = 0;
@@ -47,8 +76,27 @@ function handClass(side) {
   class SkinHand extends AnimatedHand {
     init() {
       const mesh = this.model.getObjectByProperty('type', 'SkinnedMesh');
-      mesh.frustumCulled = false;
-      mesh.material = skin;
+      if (mesh) {
+        mesh.frustumCulled = false;
+        mesh.material = skin;
+        const wrist = this.model.getObjectByName('wrist');
+        const geometry = mesh.geometry;
+        if (wrist && geometry && geometry.attributes.position) {
+          const wx = wrist.position.x;
+          const wy = wrist.position.y;
+          const wz = wrist.position.z;
+          const pos = geometry.attributes.position;
+          const count = pos.count;
+          const distances = new Float32Array(count);
+          for (let i = 0; i < count; i++) {
+            const dx = pos.getX(i) - wx;
+            const dy = pos.getY(i) - wy;
+            const dz = pos.getZ(i) - wz;
+            distances[i] = Math.sqrt(dx * dx + dy * dy + dz * dz);
+          }
+          geometry.setAttribute('wristDist', new BufferAttribute(distances, 1));
+        }
+      }
       const joints = {};
       for (const name of ['wrist', 'index-finger-tip']) joints[name] = this.model.getObjectByName(name) || null;
       tracked[side] = { model: this.model, joints };

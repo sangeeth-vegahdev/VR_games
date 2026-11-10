@@ -38,3 +38,7 @@ test_*.png
 # Draft and duplicate media
 cricket_catch_demo.mp4
 cricket-xr/*.mp4
+
+# Node
+node_modules/
+**/node_modules/

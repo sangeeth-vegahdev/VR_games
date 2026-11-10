@@ -76,8 +76,13 @@ export function gridSize(games = CFG.games, g = CFG.grid) {
 }
 
 export function getGameUrl(game) {
-  const host = window.location.hostname;
-  return `${window.location.protocol}//${host}:${game.port}`;
+  const loc = window.location;
+  if (loc.port === '8080') {
+    return `${loc.protocol}//${loc.hostname}:${game.port}`;
+  }
+  const basePath = loc.pathname.replace(/\/$/, '');
+  const subfolder = game.id === 'bulbrush' ? 'bulb' : game.id;
+  return `${loc.origin}${basePath}/${subfolder}/`;
 }
 
 // The saved best score, as shown on a tile, or null when this browser has none to show.
