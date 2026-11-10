@@ -536,18 +536,21 @@ export function makeMitt(style = 'catcher') {
 
   const pos = geo.attributes.position;
   const nrm = geo.attributes.normal;
+  geo.computeBoundingSphere();
+  if (geo.boundingSphere) {
+    geo.boundingSphere.radius = Math.max(geo.boundingSphere.radius, 0.45);
+  }
   let closed = -1;
   const api = {
     object: mitt,
     // 0 open, 1 folded shut round a ball.
     setClose(v) {
       const k = Math.max(0, Math.min(1, v));
-      if (Math.abs(k - closed) < 0.002) return;
+      if (Math.abs(k - closed) < 0.015) return;
       closed = k;
       bend(shared.base, shared.baseN, pos.array, nrm.array, k);
       pos.needsUpdate = true;
       nrm.needsUpdate = true;
-      geo.computeBoundingSphere();
     },
     get closed() {
       return Math.max(0, closed);

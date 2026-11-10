@@ -83,7 +83,9 @@ function buildLights(world) {
   cam.far = 80;
   key.shadow.bias = -0.0004;
   key.shadow.normalBias = 0.02;
-  key.shadow.radius = 3;
+  key.shadow.radius = 1;
+  key.shadow.autoUpdate = false;
+  key.shadow.needsUpdate = true;
   add(world, key);
   add(world, key.target);
   const fill = new DirectionalLight(0xc8d8ff, 0.7);
@@ -520,7 +522,7 @@ class Crowd {
       const c = canvas(64, 64);
       draw(c.getContext('2d'));
       const t = tex(c, false);
-      return new MeshStandardMaterial({ map: t, alphaTest: 0.5, side: DoubleSide, roughness: 0.9 });
+      return new MeshBasicMaterial({ map: t, alphaTest: 0.5, side: DoubleSide });
     };
     const bodyMat = card((ctx) => {
       ctx.fillStyle = '#ffffff';

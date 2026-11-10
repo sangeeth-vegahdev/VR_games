@@ -11,6 +11,16 @@ import { trackedHands } from './hands.js';
 // The hand inside the mitt is hidden, so only the mitt is seen.
 
 const POCKET_OUT = 0.05; // the pocket's centre sits this far in front of the palm
+const HAND_FOLLOW = 40; // 1/s: a tracked hand's pocket eases to its joints (about 25 ms, no jitter)
+// Where the fingers point: up (0.97, 0.24 forward) at the zone, down-and-forward when the pocket is
+// held at the plate's height (MITT_LOW_Y), as a catcher keeps it for a low ball.
+const MITT_FLOOR_Y = 0.03; // the lowest the mitt's pocket can be: on the ground, not through it
+const MITT_LOW_Y = 0.12;
+const MITT_UP_Y = 0.45;
+const MITT_DOWN_Y = -0.7; // fingers down: mostly down, a little towards the catcher
+const MITT_UP_Y_DIR = 0.97; // fingers up at the zone
+const MITT_DOWN_Z = 0.15;
+const MITT_UP_Z = 0.24;
 const OPEN_AT = 0.11; // thumb-tip to middle-tip distance (m): fully open...
 const CLOSED_AT = 0.04; // ...and fully closed
 
@@ -22,7 +32,9 @@ export class PlayerGlove {
     this.object.visible = false;
     world.createTransformEntity(this.object);
 
-    this.pocket = new Vector3(); // world position of the pocket centre
+    this.pocket = new Vector3(); // world position of the pocket centre (eased, as drawn and caught)
+    this.target = new Vector3(); // where the input puts the pocket this frame
+    this.rate = Infinity; // how fast the pocket eases to the target (Infinity: at once)
     this.normal = new Vector3(0, 0, -1); // which way the pocket opens
     this.ok = false; // is the mitt being tracked this frame?
     this.prevPocket = new Vector3(); // last frame's pocket, so catches follow a moving mitt
@@ -65,11 +77,26 @@ export class PlayerGlove {
     } else {
       this.updateTracked(player);
     }
-    // Only the hand that is not in the mitt is drawn.
-    for (const s of ['left', 'right']) {
-      const h = trackedHands[s];
-      if (h && h.mesh) h.mesh.visible = s !== this.side;
+    this.easePocket(dt);
+    // The mitt never goes through the ground (a hand held lower than the floor is held at it).
+    if (this.ok && this.pocket.y < MITT_FLOOR_Y) this.pocket.y = MITT_FLOOR_Y;
+
+    // Hide the hand wearing the mitt so fingers never clip through the leather.
+    const mittHand = trackedHands[this.side];
+    if (mittHand) {
+      if (mittHand.mesh) mittHand.mesh.visible = false;
+      if (mittHand.model) mittHand.model.visible = false;
     }
+
+    // In real baseball, the bare throwing hand is kept safely behind the catcher's back.
+    // In VR, hide the bare hand completely so only the catcher's mitt is visible.
+    const otherSide = this.side === 'left' ? 'right' : 'left';
+    const otherHand = trackedHands[otherSide];
+    if (otherHand) {
+      if (otherHand.mesh) otherHand.mesh.visible = false;
+      if (otherHand.model) otherHand.model.visible = false;
+    }
+
     const want = Math.max(this.squeeze, this.hold);
     const rate = want > this.closed ? 16 : 6;
     this.closed += (want - this.closed) * Math.min(1, rate * dt);
@@ -87,21 +114,43 @@ export class PlayerGlove {
     this.object.visible = this.ok;
   }
 
+  // The pocket eases towards its target. It snaps when the mitt has just appeared (so it never slides
+  // in from where it was last seen) and for the mouse, whose position the desktop pointer has
+  // already eased.
+  easePocket(dt) {
+    if (!this.ok) return;
+    if (!this.prevOk || this.rate === Infinity) this.pocket.copy(this.target);
+    else this.pocket.lerp(this.target, 1 - Math.exp(-this.rate * dt));
+  }
+
+  // The fingers of a catcher's mitt: held upright facing the pitcher at chest height,
+  // pointing downward at home plate height (MITT_LOW_Y), smoothly transitioning without jumping.
+  catcherUp(pocketY) {
+    const t = Math.max(0, Math.min(1, (pocketY - MITT_LOW_Y) / (MITT_UP_Y - MITT_LOW_Y)));
+    const k = t * t * (3 - 2 * t);
+    const y = MITT_DOWN_Y + (MITT_UP_Y_DIR - MITT_DOWN_Y) * k;
+    const z = MITT_DOWN_Z + (MITT_UP_Z - MITT_DOWN_Z) * k;
+    return this.v[0].set(0, y, z).normalize();
+  }
+
   updateDesktop(desktop) {
     this.ok = desktop.active;
     if (!this.ok) return;
+    this.rate = Infinity;
     // Held up in front, pocket to the pitcher, fingers up, leaning a little like a real target.
-    this.setPose(desktop.position, this.v[0].set(0, 0.97, 0.24), this.v[1].set(0, 0, -1), this.side === 'left' ? 1 : -1);
+    this.setPose(desktop.position, this.catcherUp(desktop.position.y), this.v[1].set(0, 0, -1), this.side === 'left' ? 1 : -1);
     this.squeeze = 0.1;
   }
 
   updateTracked(player) {
     const grip = player.gripSpaces[this.side];
-    this.ok = grip.visible;
+    this.ok = grip && grip.visible;
     if (!this.ok) return;
+    this.rate = HAND_FOLLOW;
     const hand = trackedHands[this.side];
     const j = hand && hand.joints;
-    if (this.useJoints && j && j.wrist && j['middle-finger-phalanx-proximal'] && j['index-finger-metacarpal'] && j['pinky-finger-metacarpal'] && hand.model.visible) {
+    // Use finger joints whenever tracked, independent of whether the raw hand mesh is drawn.
+    if (this.useJoints && j && j.wrist && j['middle-finger-phalanx-proximal'] && j['index-finger-metacarpal'] && j['pinky-finger-metacarpal'] && grip.visible) {
       const wrist = j.wrist.getWorldPosition(this.v[2]);
       const knuckle = j['middle-finger-phalanx-proximal'].getWorldPosition(this.v[3]);
       const fingers = this.v[0].subVectors(knuckle, wrist).normalize();
@@ -130,7 +179,7 @@ export class PlayerGlove {
       const fwd = this.v[2].set(0, 0, -1).transformDirection(ray.matrixWorld);
       if (fwd.z < -0.2) normal.multiplyScalar(0.4).addScaledVector(fwd, 0.6);
     }
-    this.setPose(p, this.v[0].set(0, 0.97, 0.24), normal, this.side === 'left' ? 1 : -1);
+    this.setPose(p, this.catcherUp(p.y), normal, this.side === 'left' ? 1 : -1);
     this.squeeze = 0;
   }
 
@@ -143,11 +192,10 @@ export class PlayerGlove {
     this.m.makeBasis(x, y, z);
     this.object.quaternion.setFromRotationMatrix(this.m);
     this.baseQuat.copy(this.object.quaternion);
-    // Mirror the mitt so its thumb sits on the hand's thumb side.
-    const flip = exact ? thumb : this.side === 'left' ? -1 : 1;
+    // Mirror the mitt so its thumb sits on the hand's thumb side (standard left hand catcher mitt).
+    const flip = exact ? thumb : this.side === 'left' ? 1 : -1;
     this.object.scale.set(flip, 1, 1);
-    this.object.position.copy(pocketPos);
-    this.pocket.copy(pocketPos);
+    this.target.copy(pocketPos);
     this.normal.copy(z);
   }
 }
@@ -159,10 +207,10 @@ const K = new Vector3();
 export function bareHand(player, gloveSide, out, useJoints = true) {
   const side = gloveSide === 'left' ? 'right' : 'left';
   const grip = player.gripSpaces[side];
-  if (!grip.visible) return null;
+  if (!grip || !grip.visible) return null;
   const hand = trackedHands[side];
   const j = hand && hand.joints;
-  if (useJoints && j && j.wrist && j['middle-finger-phalanx-proximal'] && hand.model.visible) {
+  if (useJoints && j && j.wrist && j['middle-finger-phalanx-proximal'] && grip.visible) {
     j.wrist.getWorldPosition(W);
     j['middle-finger-phalanx-proximal'].getWorldPosition(K);
     return out.copy(W).lerp(K, 0.55);
