@@ -18,6 +18,7 @@ export class Sound {
     this.ctx = null;
     this.noise = null;
     this.buffers = {};
+    this.crowdBed = null;
   }
 
   unlock() {
@@ -27,7 +28,6 @@ export class Sound {
       if (this.ctx.state === 'suspended') this.ctx.resume();
       if (first) {
         this.preload();
-        this.crowd();
       }
     } catch (e) {
       this.ctx = null;
@@ -139,34 +139,26 @@ export class Sound {
     }
   }
 
-  // A low ballpark murmur that runs all the time once sound is unlocked, swelling on a catch.
+  // Ballpark murmur bed is disabled to avoid continuous white noise / static hissing.
   crowd() {
-    if (!this.ctx || this.crowdBed) return;
-    try {
-      this.crowdBed = this.noiseShot('bandpass', 520, 0.6, 0.05, 1.5, 0, true);
-    } catch (e) {
-      this.crowdBed = null;
-    }
+    this.stopCrowd();
   }
 
-  cheer(strength = 1) {
-    if (!this.ctx) return;
-    try {
-      this.noiseShot('bandpass', 700, 0.5, 0.16 * strength, 0.25, 1.4);
-    } catch (e) {
-      /* sound is optional */
+  stopCrowd() {
+    if (this.crowdBed?.src) {
+      try {
+        this.crowdBed.src.stop();
+      } catch (e) {
+        /* already stopped */
+      }
     }
+    this.crowdBed = null;
   }
 
-  groan() {
-    if (!this.ctx) return;
-    try {
-      const shot = this.noiseShot('bandpass', 420, 0.8, 0.09, 0.15, 0.9);
-      shot.filter.frequency.exponentialRampToValueAtTime(260, this.ctx.currentTime + 1.0);
-    } catch (e) {
-      /* sound is optional */
-    }
-  }
+  // Disabled synthetic white-noise bursts to prevent static hiss on catch/miss.
+  cheer(strength = 1) {}
+
+  groan() {}
 
   caught(streak = 1, weight = 1) {
     this.pop(weight);
