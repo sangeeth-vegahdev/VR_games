@@ -66,8 +66,10 @@ const CRICKET = GAME_URL.includes('8081');
   console.log(JSON.stringify(results, null, 2));
   const checks = {
     'mouse hand active in session': results.center.active,
-    'low position < 0.5 m': results.low.y < 0.5,
-    'high position > 1.8 m': results.high.y > 1.8,
+    // The mitt follows the view (see pointer-alignment.test.cjs for the exact check): low is below the
+    // centre of the view, high is above it.
+    'low is below the centre of the view': results.low.y < results.center.y - 0.1,
+    'high is above the centre of the view': results.high.y > results.center.y + 0.1,
     'moves sideways': results.right.x > 0.9,
     'controller takes over': results.afterController.active === false,
     'no page errors': errors.length === 0,

@@ -28,22 +28,29 @@ function recordTest(id, name, expected, actual, pass, evidence = '') {
 }
 
 async function startServer() {
-  console.log(`Starting Vite dev server on port ${PORT}...`);
-  const proc = spawn('npx.cmd', ['vite', '--port', String(PORT), '--host', '127.0.0.1'], {
+  console.log(`Checking / starting Vite dev server on port ${PORT}...`);
+  const lockDir = path.join(__dirname, '..', '.iwsdk', 'runtime');
+  try { if (fs.existsSync(lockDir)) fs.rmSync(lockDir, { recursive: true, force: true }); } catch (e) {}
+
+  const viteBin = path.join(__dirname, '..', 'node_modules', 'vite', 'bin', 'vite.js');
+  const proc = spawn(process.execPath, [viteBin, '--port', String(PORT), '--host', '127.0.0.1'], {
     cwd: path.resolve(__dirname, '..'),
-    shell: true,
+    shell: false,
     stdio: 'pipe',
   });
 
   await new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error('Server start timed out')), 25000);
-    proc.stdout.on('data', (d) => {
+    const onData = (d) => {
       const msg = d.toString();
-      if (msg.includes('Local:')) {
+      if (msg.includes('Local:') || msg.includes('localhost:') || msg.includes('ready in')) {
         clearTimeout(timeout);
         resolve();
       }
-    });
+    };
+    proc.stdout.on('data', onData);
+    proc.stderr.on('data', onData);
+    proc.on('error', reject);
   });
 
   return proc;

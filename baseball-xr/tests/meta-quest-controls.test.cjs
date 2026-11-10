@@ -47,13 +47,13 @@ const GAME_URL = process.env.GAME_URL || 'https://localhost:8082';
     const markerPos = s.marker.position;
     await d.remote.dispatch('set_transform', {
       device: 'hand-left',
-      position: { x: markerPos.x, y: markerPos.y, z: markerPos.z },
+      position: { x: markerPos.x - s.player.position.x, y: markerPos.y - s.player.position.y, z: markerPos.z - s.player.position.z },
       anchor: 'grip',
     });
 
     s.lockout = 0;
     s.state = 'idle';
-    s.player.gripSpaces.left.position.set(markerPos.x, markerPos.y, markerPos.z);
+    s.player.gripSpaces.left.position.set(markerPos.x - s.player.position.x, markerPos.y - s.player.position.y, markerPos.z - s.player.position.z);
     s.player.gripSpaces.left.visible = true;
     s.glove.update(s.player, s.desktop, true, 1 / 60);
     s.updateMenu();
@@ -77,7 +77,7 @@ const GAME_URL = process.env.GAME_URL || 'https://localhost:8082';
 
     const markerPos = s.marker.position;
     const leftGrip = s.player.gripSpaces.left;
-    leftGrip.position.set(markerPos.x, markerPos.y, markerPos.z);
+    leftGrip.position.set(markerPos.x - s.player.position.x, markerPos.y - s.player.position.y, markerPos.z - s.player.position.z);
     leftGrip.visible = true;
 
     s.lockout = 0;
@@ -103,12 +103,17 @@ const GAME_URL = process.env.GAME_URL || 'https://localhost:8082';
     const initialSide = s.glove.side;
     s.state = 'idle';
     s.swapLockout = 0;
+    // The mitt is still parked on the start marker from the step above: take it out of reach first,
+    // or the menu starts a round before it looks at the swap orb.
+    s.player.gripSpaces.left.visible = false;
+    s.glove.update(s.player, s.desktop, true, 1 / 60);
 
     // Move right hand to touch gold swap orb
     const swapPos = s.swapOrb.position;
     const rightGrip = s.player.gripSpaces.right;
-    rightGrip.position.set(swapPos.x, swapPos.y, swapPos.z);
+    rightGrip.position.set(swapPos.x - s.player.position.x, swapPos.y - s.player.position.y, swapPos.z - s.player.position.z);
     rightGrip.visible = true;
+    rightGrip.updateMatrixWorld(true); // the world position is read straight after the move
     s.updateMenu();
     const swappedSide = s.glove.side;
 

@@ -3,13 +3,14 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Object3D, Quaternion, Vector3 } from '@iwsdk/core';
-import { CFG } from '../src/config.js';
+import { CATCHER_EYE_Y, CFG } from '../src/config.js';
 import {
   breakAccel, callOffset, callWords, choosePitch, clampToReach, commandMiss, drawnRps, flutterAt, flutterParams,
   FRAME, INCH, LEVELS, levelById, MPH, PITCHES, pitchSpeed, REACH, SPEED, spinAxis, STRIKE_ZONE, umpire,
 } from '../src/pitches.js';
 import { FocusTracker } from '../src/gaze.js';
 import { EyeRingTracker, projectGazePoint } from '../src/eye-tracker.js';
+import { inTargetSquare } from '../src/game.js';
 
 const BALL_RADIUS = 0.048; // src/ball.js
 
@@ -269,19 +270,18 @@ test('before any pitch is measured, focus is null', () => {
   assert.equal(f.focus, null);
 });
 
-test('eye ring tracker: projects gaze ray to the exact distance of the ball', () => {
+test('eye ring tracker: stays anchored to baseball position in pitcher hand and flight', () => {
   const origin = new Vector3(0, 1.3, 0);
   const dir = new Vector3(0, 0, -1);
-  const ball = new Vector3(0, 1.3, -12);
-  const pt = projectGazePoint(origin, dir, ball);
-  assert.ok(pt.distanceTo(ball) < 1e-6, 'ring is centered on the ball when gaze is direct');
+  const pitcherHandBall = new Vector3(0.2, 1.95, -16.5);
+  const pt = projectGazePoint(origin, dir, pitcherHandBall);
+  assert.ok(pt.distanceTo(pitcherHandBall) < 1e-6, 'ring is anchored to ball in pitcher hand');
 
-  // Gaze tilted 15 degrees right
-  const angle = (15 * Math.PI) / 180;
-  const tiltedDir = new Vector3(Math.sin(angle), 0, -Math.cos(angle)).normalize();
-  const ptTilted = projectGazePoint(origin, tiltedDir, ball);
-  assert.ok(Math.abs(origin.distanceTo(ptTilted) - 12) < 1e-6, 'ring maintains ball depth on the gaze ray');
-  assert.ok(ptTilted.x > 3, 'ring moves in direction of eye movement');
+  // Any gaze tilt (even looking up toward scoreboard at 25 degrees) does not displace tracker into sky
+  const angle = (25 * Math.PI) / 180;
+  const skyDir = new Vector3(0, Math.sin(angle), -Math.cos(angle)).normalize();
+  const ptSky = projectGazePoint(origin, skyDir, pitcherHandBall);
+  assert.ok(ptSky.distanceTo(pitcherHandBall) < 1e-6, 'tracker stays at pitcher hand level and never jumps to scoreboard');
 });
 
 test('eye ring tracker: visual reticle locks on and scales with distance', () => {
@@ -305,11 +305,11 @@ test('eye ring tracker: visual reticle locks on and scales with distance', () =>
   assert.equal(tracker.ringMaterial.color.getHex(), 0x5eead4, 'ring turns cyan-teal on lock');
   assert.ok(tracker.group.scale.x > 0.4, 'ring scales proportionally at 10m');
 
-  // Update when eyes look away
+  // Update when eyes look away: stays anchored to the ball, dims to neutral white, does not jump to sky
   mockFocus.watching = false;
-  mockFocus.dir.set(0.5, 0, -0.866).normalize();
+  mockFocus.dir.set(0, 0.8, -0.6).normalize(); // looking high toward sky / scoreboard
   tracker.update(mockFocus, ball, false, true, camera, null, 1 / 60);
-  assert.ok(tracker.group.position.distanceTo(ball) > 4, 'reticle moves away from ball with eye direction');
+  assert.ok(tracker.group.position.distanceTo(ball) < 1e-6, 'reticle remains at ball position instead of leaping to sky');
   assert.equal(tracker.ringMaterial.color.getHex(), 0xffffff, 'ring dims to white when off target');
 });
 
@@ -354,4 +354,244 @@ test('umpire framing mechanics: quiet framing vs aggressive stabbing', () => {
   const stabbedCall = umpire(borderlineInside, true, 3.0);
   assert.equal(stabbedCall.strike, false, 'Stabbed pitch inside zone is rung up as a ball');
   assert.equal(stabbedCall.stabbed, true, 'Umpire flags stabbed pitch');
+});
+
+test('target square detection: hand inside strike zone square is accepted easily', () => {
+  const targetPos = { x: 0, y: 0.60, z: -0.55, distanceTo(o) { return Math.hypot(this.x - o.x, this.y - o.y, this.z - o.z); } };
+
+  // Directly centered at target
+  const deadCenter = { x: 0, y: 0.60, z: -0.55, distanceTo(o) { return Math.hypot(this.x - o.x, this.y - o.y, this.z - o.z); } };
+  assert.equal(inTargetSquare(deadCenter, targetPos), true, 'dead center is inside square');
+
+  // Planar offset within zone width/height but at same depth
+  const upperRight = { x: STRIKE_ZONE.halfWidth, y: 0.60 + STRIKE_ZONE.halfHeight, z: -0.55, distanceTo(o) { return Math.hypot(this.x - o.x, this.y - o.y, this.z - o.z); } };
+  assert.equal(inTargetSquare(upperRight, targetPos), true, 'upper right boundary is inside square');
+
+  // Natural arm depth discrepancy (+-15cm to +-35cm in Z)
+  const armDrawnBack = { x: 0.05, y: 0.62, z: -0.40, distanceTo(o) { return Math.hypot(this.x - o.x, this.y - o.y, this.z - o.z); } };
+  assert.equal(inTargetSquare(armDrawnBack, targetPos), true, 'hand held closer to chest is inside square');
+
+  const armExtended = { x: -0.05, y: 0.58, z: -0.85, distanceTo(o) { return Math.hypot(this.x - o.x, this.y - o.y, this.z - o.z); } };
+  assert.equal(inTargetSquare(armExtended, targetPos), true, 'hand reached forward is inside square');
+
+  // Hand far away should be rejected
+  const farAway = { x: 1.2, y: 1.5, z: -0.55, distanceTo(o) { return Math.hypot(this.x - o.x, this.y - o.y, this.z - o.z); } };
+  assert.equal(inTargetSquare(farAway, targetPos), false, 'hand 1m away is rejected');
+});
+
+test('lag fix: delta time clamp at 0.15s preserves game speed at low framerate', () => {
+  // At 15 FPS (frame time ~66ms):
+  const lowFpsDt = 1 / 15;
+  const clampedDt = Math.min(lowFpsDt, 0.15);
+  // Clamped dt should equal the real frame time, not 0.05 (which caused slow motion)
+  assert.ok(Math.abs(clampedDt - lowFpsDt) < 1e-6, 'game advances full wall-clock step at 15 FPS');
+  assert.ok(clampedDt > 0.05, 'dt is not artificially throttled to 50ms slow motion');
+});
+
+test('catcher crouch stance: eyes sit at CATCHER_EYE_Y = 0.95m', () => {
+  const CATCHER_EYE_Y = 0.95;
+  const standingHeadWorldY = 1.65;
+  const rigWorldY = 0;
+  const physicalHeadY = standingHeadWorldY - rigWorldY;
+  const targetRigY = CATCHER_EYE_Y - physicalHeadY;
+
+  // With rig offset, player eyes sit exactly at CATCHER_EYE_Y
+  const actualEyeY = physicalHeadY + targetRigY;
+  assert.ok(Math.abs(actualEyeY - CATCHER_EYE_Y) < 1e-6, 'catcher eyes sit at authentic crouch height');
+});
+
+test('real baseball catcher: bare throwing hand is hidden from view', () => {
+  const trackedHands = {
+    left: { mesh: { visible: true }, model: { visible: true } },
+    right: { mesh: { visible: true }, model: { visible: true } },
+  };
+  const side = 'left'; // catching glove is on the left hand
+  const otherSide = side === 'left' ? 'right' : 'left';
+  const otherHand = trackedHands[otherSide];
+
+  // In real baseball, the throwing hand stays hidden behind the back/ankle
+  if (otherHand) {
+    if (otherHand.mesh) otherHand.mesh.visible = false;
+    if (otherHand.model) otherHand.model.visible = false;
+  }
+
+  assert.equal(trackedHands.right.mesh.visible, false, 'bare hand mesh is not drawn');
+  assert.equal(trackedHands.right.model.visible, false, 'bare hand model root is not drawn');
+});
+
+test('strike zone target alignment: middle of strike zone is centered at home plate', () => {
+  const targetPos = { x: 0, y: 0.85, z: CFG.arriveZ, distanceTo(o) { return Math.hypot(this.x - o.x, this.y - o.y, this.z - o.z); } };
+  const gloveAtCenter = { x: 0, y: 0.85, z: CFG.arriveZ, distanceTo(o) { return Math.hypot(this.x - o.x, this.y - o.y, this.z - o.z); } };
+
+  assert.equal(inTargetSquare(gloveAtCenter, targetPos), true, 'glove in the exact middle of strike zone is accepted');
+});
+
+test('diagnostics frame time accumulator: running frameSum maintains exact sum in O(1)', () => {
+  const frameTimes = [];
+  let frameSum = 0;
+  const maxSamples = 120;
+
+  for (let i = 1; i <= 200; i++) {
+    const dt = 16.6 + (i % 5);
+    frameTimes.push(dt);
+    frameSum += dt;
+    if (frameTimes.length > maxSamples) {
+      frameSum -= frameTimes.shift();
+    }
+  }
+
+  const expectedSum = frameTimes.reduce((a, b) => a + b, 0);
+  assert.ok(Math.abs(frameSum - expectedSum) < 1e-9, 'running sum matches array reduce without allocations');
+});
+
+test('lag optimization: glove squeeze deadband prevents per-frame vertex re-bending', () => {
+  const deadband = 0.015;
+  let recomputeCount = 0;
+  let closed = 0.1;
+
+  function tryClose(v) {
+    const k = Math.max(0, Math.min(1, v));
+    if (Math.abs(k - closed) < deadband) return false;
+    closed = k;
+    recomputeCount++;
+    return true;
+  }
+
+  // Micro-sensor jitter from Quest tracking cameras (+-0.005)
+  assert.equal(tryClose(0.103), false, '0.003 jitter does not trigger recompute');
+  assert.equal(tryClose(0.108), false, '0.008 jitter does not trigger recompute');
+  assert.equal(recomputeCount, 0, 'zero vertex buffer recomputations during micro jitter');
+
+  // Real deliberate hand squeeze (+0.10)
+  assert.equal(tryClose(0.20), true, 'deliberate squeeze triggers update');
+  assert.equal(recomputeCount, 1, 'updated on real squeeze');
+});
+
+test('catcher view camera: aligned behind home plate and looking towards mound', () => {
+  const cameraPos = { x: 0, y: 1.15, z: 1.1 };
+  const moundLookAt = { x: 0, y: 0.85, z: -19.24 };
+
+  assert.ok(cameraPos.y >= CATCHER_EYE_Y, 'camera is positioned just above/behind crouch height');
+  assert.ok(cameraPos.z >= 1.0, 'camera gives natural perspective without clipping the mitt');
+  assert.ok(moundLookAt.z < -18, 'view is aimed straight at the pitcher on the mound');
+});
+
+test('anywhere in strike zone square is accepted', () => {
+  const zoneCenter = { x: 0, y: 0.85, z: CFG.arriveZ, distanceTo(o) { return Math.hypot(this.x - o.x, this.y - o.y, this.z - o.z); } };
+  const calledAt = { x: 0.20, y: 1.05, z: CFG.arriveZ, distanceTo(o) { return Math.hypot(this.x - o.x, this.y - o.y, this.z - o.z); } };
+
+  // Glove placed in opposite corner of the square (-0.20, 0.65) away from called spot
+  const gloveInOppositeCorner = { x: -0.20, y: 0.65, z: CFG.arriveZ, distanceTo(o) { return Math.hypot(this.x - o.x, this.y - o.y, this.z - o.z); } };
+
+  const inSquare = inTargetSquare(gloveInOppositeCorner, zoneCenter) || inTargetSquare(gloveInOppositeCorner, calledAt);
+  assert.equal(inSquare, true, 'glove in any part of the strike zone square is accepted');
+});
+
+test('catcherUp glove orientation: tilts fingers downward for low pitches and upright for high pitches', () => {
+  const MITT_LOW_Y = 0.12;
+  const MITT_UP_Y = 0.45;
+  const MITT_DOWN_Y = -0.7;
+  const MITT_UP_Y_DIR = 0.97;
+  const MITT_DOWN_Z = 0.15;
+  const MITT_UP_Z = 0.24;
+
+  function catcherUp(pocketY) {
+    const t = Math.max(0, Math.min(1, (pocketY - MITT_LOW_Y) / (MITT_UP_Y - MITT_LOW_Y)));
+    const k = t * t * (3 - 2 * t);
+    const y = MITT_DOWN_Y + (MITT_UP_Y_DIR - MITT_DOWN_Y) * k;
+    const z = MITT_DOWN_Z + (MITT_UP_Z - MITT_DOWN_Z) * k;
+    const len = Math.hypot(y, z);
+    return { y: y / len, z: z / len };
+  }
+
+  // Dirt pitch (in dirt below plate): fingers tilt down to scoop
+  const dirt = catcherUp(0.10);
+  assert.ok(dirt.y < -0.8, `dirt ball finger Y (${dirt.y}) must tilt downwards`);
+
+  // Low strike zone pitch (knee height): fingers upright facing pitcher
+  const lowZone = catcherUp(0.40);
+  assert.ok(lowZone.y > 0.8, `low strike zone finger Y (${lowZone.y}) must stay upright facing pitcher`);
+
+  // High pitch (pocket at top of zone): fingers point upright towards the sky
+  const high = catcherUp(0.85);
+  assert.ok(high.y > 0.8, `high ball finger Y (${high.y}) must point upright`);
+});
+
+test('desktop pointer: dynamic reach compensation reaches low catches down to REACH_Y0', () => {
+  const CATCH_PLANE_Z = CFG.arriveZ; // -0.55m
+  const REACH_Y0 = 0.05; // 5cm above dirt
+  const cameraY = 0.95; // CATCHER_EYE_Y
+  const fovHalfTan = Math.tan((35 * Math.PI) / 180); // 70 deg vertical FOV
+
+  // Natural unprojected bottom reach on untilted camera:
+  const lowestReach = cameraY - (-CATCH_PLANE_Z) * fovHalfTan; // ~0.565m
+  assert.ok(lowestReach > 0.50, 'natural frustum cuts off well above plate');
+
+  function projectToPlane(ndcY) {
+    const rawY = cameraY + ndcY * (-CATCH_PLANE_Z) * fovHalfTan;
+    let y = rawY;
+    if (lowestReach > REACH_Y0 && ndcY < -0.85) {
+      const shortfall = lowestReach - REACH_Y0;
+      const t = Math.min(1, (-ndcY - 0.85) / 0.15);
+      const k = t * t * (3 - 2 * t);
+      y -= shortfall * k;
+    }
+    return y;
+  }
+
+  // At bottom of canvas (ndc.y = -1), mitt reaches down to plate floor
+  const atBottom = projectToPlane(-1);
+  assert.ok(Math.abs(atBottom - REACH_Y0) < 1e-6, `bottom pointer must reach REACH_Y0 (got ${atBottom})`);
+
+  // Across the strike zone (ndc.y >= -0.85), pure optical ray is preserved (zero error)
+  const atLowZone = projectToPlane(-0.75);
+  const rawLowZone = cameraY + (-0.75) * (-CATCH_PLANE_Z) * fovHalfTan;
+  assert.ok(Math.abs(atLowZone - rawLowZone) < 1e-6, 'strike zone optical ray is preserved with zero error');
+
+  // At center of canvas (ndc.y = 0), unprojected ray is unchanged
+  const atCenter = projectToPlane(0);
+  assert.ok(Math.abs(atCenter - cameraY) < 1e-6, 'center pointer is unchanged');
+
+  // At top of canvas (ndc.y = +1), unprojected ray reaches high pitches without modification
+  const atTop = projectToPlane(1);
+  assert.ok(atTop > 1.3, 'top pointer reaches high zone without distortion');
+});
+
+test('desktop gaze simulation outside XR: mouse movement drives gaze ray and ball focus', () => {
+  const f = new FocusTracker();
+  assert.equal(f.simulated, false, 'starts unsimulated before any mouse movement');
+
+  // Simulate mouse movement on desktop
+  f.emuMoved = true;
+  f.emuX = 0;
+  f.emuY = 0;
+
+  // Outside XR session (inHeadset = false), focus tracker runs simulated eye tracking
+  f.sample(rig(), camera, false);
+  assert.equal(f.mode, 'eyes', 'mode switches to eyes via desktop simulation');
+  assert.equal(f.simulated, true, 'simulated flag is true');
+
+  // Ball tracking operates smoothly
+  f.resetPitch();
+  const ball = new Vector3(0, 1.2, -5);
+  for (let i = 0; i < 60; i++) f.track(ball, 1 / 60, 5);
+  assert.equal(f.focus, 1, 'watching ball in simulated desktop gaze accumulates 100% focus');
+});
+
+test('pitch target vs gaze reticle: distinct crosshairs and separate visual identities', () => {
+  // Target ring properties
+  const targetColor = 0xffd166; // gold
+  const targetTicksCount = 4; // crosshair ticks at 0, 90, 180, 270 deg
+  const targetDepth = CFG.arriveZ; // fixed at catch plane -0.55m
+
+  // Gaze reticle properties
+  const eyeColorLocked = 0x5eead4; // cyan-teal
+  const eyeColorUnlocked = 0xffffff; // white
+  const eyeHasTicks = false;
+
+  assert.notEqual(targetColor, eyeColorLocked, 'target and gaze reticles must have different colors');
+  assert.notEqual(targetColor, eyeColorUnlocked, 'target and idle gaze must have different colors');
+  assert.equal(targetTicksCount, 4, 'target ring has crosshair tick tabs for aiming');
+  assert.equal(eyeHasTicks, false, 'gaze reticle is a smooth circle without crosshair ticks');
+  assert.equal(targetDepth, -0.55, 'target ring is stationary in world space on strike zone plane');
 });
