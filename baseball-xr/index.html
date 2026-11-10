@@ -2,41 +2,75 @@
 <html>
   <head>
     <meta charset="utf-8" />
-    <meta
-      name="viewport"
-      content="width=device-width, initial-scale=1, shrink-to-fit=no"
-    />
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
     <link rel="icon" href="data:," />
     <title>Glove Up: Baseball Catch</title>
   </head>
   <body style="margin: 0">
     <div id="scene-container"></div>
     <script type="module" src="/src/index.js"></script>
-  
-    <!-- Floating IWSDK Device Switcher (Meta Quest 3 vs Meta Quest Pro) -->
-    <div id="iwsdk-device-switcher" style="position:fixed;bottom:16px;left:16px;z-index:999999;display:flex;align-items:center;gap:8px;background:rgba(15,23,42,0.92);backdrop-filter:blur(10px);padding:8px 12px;border-radius:12px;border:1px solid rgba(255,255,255,0.15);font-family:system-ui,-apple-system,sans-serif;box-shadow:0 12px 32px rgba(0,0,0,0.6);">
+
+    <!-- Hamburger button to toggle Emulator Menu -->
+    <button
+      id="emulator-toggle-btn"
+      onclick="toggleEmulatorSwitcher()"
+      style="position:fixed;top:12px;right:12px;z-index:1000000;display:flex;align-items:center;gap:6px;background:rgba(15,23,42,0.88);backdrop-filter:blur(8px);color:#f1f5f9;border:1px solid rgba(255,255,255,0.2);padding:7px 12px;border-radius:10px;font-family:system-ui,-apple-system,sans-serif;font-size:12px;font-weight:600;cursor:pointer;box-shadow:0 6px 16px rgba(0,0,0,0.4);transition:all 0.2s;"
+      title="Toggle Emulator Menu"
+    >
+      <span id="emulator-toggle-icon" style="font-size:14px;line-height:1;">☰</span>
+      <span>Emulator</span>
+    </button>
+
+    <!-- Floating IWSDK Device Switcher (Collapsible, hidden by default) -->
+    <div
+      id="iwsdk-device-switcher"
+      style="position:fixed;top:52px;right:12px;z-index:999999;display:none;align-items:center;gap:6px;background:rgba(15,23,42,0.94);backdrop-filter:blur(10px);padding:8px 12px;border-radius:12px;border:1px solid rgba(255,255,255,0.15);font-family:system-ui,-apple-system,sans-serif;box-shadow:0 12px 32px rgba(0,0,0,0.6);flex-wrap:wrap;max-width:calc(100vw - 24px);"
+    >
       <span style="color:#94a3b8;font-size:11px;font-weight:700;letter-spacing:0.5px;">EMULATOR:</span>
-      <button id="dev-btn-q3" onclick="setEmulatorDevice('metaQuest3')" style="padding:6px 12px;font-size:12px;font-weight:600;border-radius:8px;border:1px solid transparent;cursor:pointer;background:#1e293b;color:#94a3b8;transition:all 0.2s;">🥽 Meta Quest 3</button>
-      <button id="dev-btn-pro" onclick="setEmulatorDevice('metaQuestPro')" style="padding:6px 12px;font-size:12px;font-weight:600;border-radius:8px;border:1px solid transparent;cursor:pointer;background:#1e293b;color:#94a3b8;transition:all 0.2s;">👁️ Meta Quest Pro (Eye Gaze)</button>
+      <button id="dev-btn-glasses" onclick="setEmulatorDevice('metaVRGlasses')" style="padding:6px 10px;font-size:12px;font-weight:600;border-radius:8px;border:1px solid transparent;cursor:pointer;background:#1e293b;color:#94a3b8;transition:all 0.2s;">👓 VR Glasses (Gaze)</button>
+      <button id="dev-btn-pro" onclick="setEmulatorDevice('metaQuestPro')" style="padding:6px 10px;font-size:12px;font-weight:600;border-radius:8px;border:1px solid transparent;cursor:pointer;background:#1e293b;color:#94a3b8;transition:all 0.2s;">👁️ Quest Pro</button>
+      <button id="dev-btn-q3" onclick="setEmulatorDevice('metaQuest3')" style="padding:6px 10px;font-size:12px;font-weight:600;border-radius:8px;border:1px solid transparent;cursor:pointer;background:#1e293b;color:#94a3b8;transition:all 0.2s;">🥽 Quest 3</button>
+      <button id="dev-btn-debug" onclick="window.__toggleDebug && window.__toggleDebug()" style="padding:6px 10px;font-size:12px;font-weight:600;border-radius:8px;border:1px solid #eab308;cursor:pointer;background:#854d0e;color:#fef08a;">🔍 Colliders (D)</button>
+      <a href="https://localhost:8081/?autoxr=1" style="padding:6px 10px;font-size:12px;font-weight:600;border-radius:8px;text-decoration:none;background:#6366f1;color:#ffffff;display:inline-flex;align-items:center;gap:4px;">🏏 Cricket Catch</a>
+      <a href="https://localhost:8080" style="padding:6px 10px;font-size:12px;font-weight:600;border-radius:8px;text-decoration:none;background:#334155;color:#ffffff;display:inline-flex;align-items:center;gap:4px;">🏛️ Lobby</a>
     </div>
+
     <script>
+      function toggleEmulatorSwitcher() {
+        const sw = document.getElementById('iwsdk-device-switcher');
+        const icon = document.getElementById('emulator-toggle-icon');
+        if (!sw) return;
+        const isOpen = sw.style.display === 'flex';
+        sw.style.display = isOpen ? 'none' : 'flex';
+        if (icon) icon.textContent = isOpen ? '☰' : '✕';
+      }
+
       function setEmulatorDevice(dev) {
         localStorage.setItem('iwsdk:device', dev);
         const url = new URL(window.location.href);
         url.searchParams.set('device', dev);
         window.location.href = url.toString();
       }
+
       (function() {
-        const cur = new URL(window.location.href).searchParams.get('device') || localStorage.getItem('iwsdk:device') || 'metaQuestPro';
+        const cur = new URL(window.location.href).searchParams.get('device') || localStorage.getItem('iwsdk:device') || 'metaVRGlasses';
         const q3Btn = document.getElementById('dev-btn-q3');
         const proBtn = document.getElementById('dev-btn-pro');
-        if (cur === 'metaQuest3') {
-          if (q3Btn) { q3Btn.style.background = '#2563eb'; q3Btn.style.color = '#ffffff'; q3Btn.style.borderColor = '#60a5fa'; }
-        } else {
-          if (proBtn) { proBtn.style.background = '#0ea5e9'; proBtn.style.color = '#ffffff'; proBtn.style.borderColor = '#38bdf8'; }
+        const glassesBtn = document.getElementById('dev-btn-glasses');
+        if (cur === 'metaQuest3' && q3Btn) {
+          q3Btn.style.background = '#2563eb';
+          q3Btn.style.color = '#ffffff';
+          q3Btn.style.borderColor = '#60a5fa';
+        } else if (cur === 'metaQuestPro' && proBtn) {
+          proBtn.style.background = '#0ea5e9';
+          proBtn.style.color = '#ffffff';
+          proBtn.style.borderColor = '#38bdf8';
+        } else if (glassesBtn) {
+          glassesBtn.style.background = '#8b5cf6';
+          glassesBtn.style.color = '#ffffff';
+          glassesBtn.style.borderColor = '#a78bfa';
         }
       })();
     </script>
-
   </body>
 </html>
