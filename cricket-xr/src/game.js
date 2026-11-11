@@ -4,12 +4,27 @@ import {
   Mesh,
   MeshBasicMaterial,
   MeshStandardMaterial,
+  Quaternion,
   RingGeometry,
   SphereGeometry,
   Vector3,
   VisibilityState,
 } from '@iwsdk/core';
 import { BALL_RADIUS, makeBall, setGlowForDistance } from './ball.js';
+import {
+  commitHand,
+  createContact,
+  createDecision,
+  createHand,
+  deflectVelocity,
+  evaluateCatch,
+  evaluateHand,
+  invalidateHand,
+  setHandFromJoints,
+  setHandFromPoint,
+  setHandFromPose,
+  updateHandMotion,
+} from './catching.js';
 import { CFG, RESTART_POS, RESTART_RADIUS } from './config.js';
 import { Coach } from './coach.js';
 import { DesktopHand } from './desktop-hand.js';
@@ -121,50 +136,38 @@ export class GameSystem extends createSystem({}) {
     this.desktop = new DesktopHand(this.world);
     this.cleanupFuncs.push(() => this.desktop.dispose());
 
-    // Anatomical compound hand colliders: palm, fingers, and thumb contact points
-    this.handColliders = {
-      left: {
-        wrist: new Vector3(),
-        palm: new Vector3(),
-        fingers: new Vector3(),
-        index: new Vector3(),
-        pinky: new Vector3(),
-        thumb: new Vector3(),
-        hasJoints: false,
-      },
-      right: {
-        wrist: new Vector3(),
-        palm: new Vector3(),
-        fingers: new Vector3(),
-        index: new Vector3(),
-        pinky: new Vector3(),
-        thumb: new Vector3(),
-        hasJoints: false,
-      },
-    };
-
-    // Each hand's palm: centre, the way it faces (when known), and where it was last frame (so the
-    // catch test can follow a moving hand). Read from the drawn hand's joints when available.
-    this.palm = { left: new Vector3(), right: new Vector3() };
+    // Each hand as the catching rules see it (src/catching.js). The palm/normal arrays below alias its
+    // vectors; they are what the tests and the HUD read.
+    this.hands = { left: createHand('left'), right: createHand('right') };
+    this.decision = createDecision();
+    this.clickContact = createContact();
+    this.catchInfo = null; // what the last catch was: technique, tags, quality
+    this.palm = { left: this.hands.left.palm, right: this.hands.right.palm };
     this.palmOk = { left: false, right: false };
-    this.palmNormal = { left: new Vector3(0, 0, -1), right: new Vector3(0, 0, -1) };
+    this.palmNormal = { left: this.hands.left.normal, right: this.hands.right.normal };
     this.palmNormalOk = { left: false, right: false };
-    this.palmFingers = { left: new Vector3(0, 1, 0), right: new Vector3(0, 1, 0) };
-    this.palmThumb = { left: new Vector3(1, 0, 0), right: new Vector3(-1, 0, 0) }; // towards the thumb
-    this.prevPalm = { left: new Vector3(), right: new Vector3() };
-    this.prevPalmOk = { left: false, right: false };
+    this.palmFingers = { left: this.hands.left.fingers, right: this.hands.right.fingers };
+    this.palmThumb = { left: this.hands.left.across, right: this.hands.right.across }; // towards the thumb
     this.palmFromJoints = true; // the headless test turns this off to place hands by their grip pose
-    this.rel0 = new Vector3();
-    this.rel1 = new Vector3();
-    this.contact = new Vector3();
-    this.settleFrom = new Vector3();
+    this.J = {
+      wrist: new Vector3(), middleProx: new Vector3(), indexMeta: new Vector3(), pinkyMeta: new Vector3(),
+      indexProx: new Vector3(), pinkyProx: new Vector3(), thumbProx: new Vector3(),
+      middleTip: new Vector3(), indexTip: new Vector3(), pinkyTip: new Vector3(), thumbTip: new Vector3(),
+    };
+    this.shoulders = { left: new Vector3(), right: new Vector3(), axis: new Vector3(1, 0, 0) };
+    this.headQ = new Quaternion();
+    this.handCtx = { head: null, ballPos: null, ballVel: null, ballActive: false, holding: false, palm: null, side: 'right', pair: false };
     this.heldAt = new Vector3();
+    this.settleFrom = new Vector3();
     this.restAt = new Vector3(); // where a caught ball rests in the hand
-    this.j = [new Vector3(), new Vector3(), new Vector3(), new Vector3()];
     this.settle = 0;
     this.settleScale = 1;
     this.nearest = Infinity;
     this.deflected = false;
+    this.freeFlight = false;
+    this.isWide = false;
+    this.forceType = null; // test hook, see beginThrow
+    this.forceWideSide = 0;
     this.twoHanded = false;
     this.lastResult = null;
     this.prev = new Vector3();
@@ -173,7 +176,6 @@ export class GameSystem extends createSystem({}) {
     this.launchVel = new Vector3();
     this.accel = new Vector3();
     this.tmp = new Vector3();
-    this.seg = new Vector3();
     this.aim = new Vector3();
     this.release = new Vector3();
     this.head = new Vector3();
@@ -264,6 +266,15 @@ export class GameSystem extends createSystem({}) {
       get best() { return this.sys.best; },
       get skinHands() { return this.sys.skinHands; },
       get focusMode() { return this.sys.focus.mode; },
+      get focusSource() { return this.sys.focus.source; },
+      get catchInfo() { return this.sys.catchInfo; },
+      get trackedHands() { return trackedHands; },
+      get catching() { return { setHandFromPose, createHand }; },
+      get focusStats() {
+        const f = this.sys.focus;
+        return { mode: f.mode, source: f.source, realEyes: f.realEyes, simulated: f.simulated, valid: f.valid, movement: f.movement, watching: f.watching, lookedAway: f.lookedAway, eyeTravel: f.eyeTravel, headTravel: f.headTravel, focus: f.focus };
+      },
+      get isWide() { return this.sys.isWide; },
       get eyeTracker() { return this.sys.eyeTracker; },
       get eyeTrackerPos() { return this.sys.eyeTracker.group.position; },
       get eyeTrackerVisible() { return this.sys.eyeTracker.visible; },
@@ -288,13 +299,13 @@ export class GameSystem extends createSystem({}) {
     // A first-timer sees one line, not the rules: the practice balls teach the rest.
     const lines = this.tutorialDone
       ? [
-          { text: `Catch ${CFG.balls} balls with your hands` },
-          this.best
-            ? { text: `Your best: ${this.best} / ${CFG.balls}` }
-            : { text: inHeadset ? 'Watch the ball swing, then reach for it' : 'On a PC, move the mouse to catch' },
-        ]
+        { text: `Catch ${CFG.balls} balls with your hands` },
+        this.best
+          ? { text: `Your best: ${this.best} / ${CFG.balls}` }
+          : { text: inHeadset ? 'Watch the ball swing, then reach for it' : 'On a PC, move the mouse to catch' },
+      ]
       : [{ text: inHeadset ? 'Your bare hands are the catchers' : 'The mouse is your hand' }];
-    this.hud.showCard('Cricket Catch', lines, inHeadset ? 'Touch the green ball to start' : 'Touch the green ball, or press Space');
+    this.hud.showCard('Cricket Catch', lines, inHeadset ? 'Touch the green ball, or pinch, to start' : 'Touch the green ball, or press Space');
   }
 
   tryStart() {
@@ -378,8 +389,13 @@ export class GameSystem extends createSystem({}) {
     const tut = this.tut;
     if (!tut) this.ballNo++;
     const roll = Math.random();
-    this.isHighCatch = !tut && this.ballNo > 3 && roll < 0.20;
-    this.isLowCatch = !tut && this.ballNo > 2 && !this.isHighCatch && roll < 0.42;
+    // `forceType` is a test hook (set through window.__game): 'high' | 'low' | 'wide' | 'normal'.
+    const force = tut ? null : this.forceType;
+    this.isHighCatch = force ? force === 'high' : !tut && this.ballNo > 3 && roll < 0.20;
+    // Low balls are disabled (CFG.lowBallChance = 0): never generated, not even by the test hook.
+    // The low-catch code below and in catching.js stays so they can be re-enabled by raising the chance.
+    const lowAllowed = CFG.lowBallChance > 0;
+    this.isLowCatch = lowAllowed && (force ? force === 'low' : !tut && this.ballNo > 2 && !this.isHighCatch && roll >= 0.20 && roll < 0.20 + CFG.lowBallChance);
 
     const ramp = Math.min(1, (this.ballNo - 1) / CFG.rampBalls);
     let speed = lerp(CFG.startSpeed, CFG.maxSpeed, ramp);
@@ -427,11 +443,13 @@ export class GameSystem extends createSystem({}) {
       targetY = this.head.y - CFG.chestBelowHead + (tut ? 0 : (Math.random() * 2 - 1) * CFG.targetSpreadY);
     }
 
-    this.aim.set(
-      tut ? 0 : (Math.random() * 2 - 1) * CFG.targetSpreadX,
-      targetY,
-      CFG.arriveZ,
-    );
+    // Now and then a ball arrives wide, past the reach of a two-handed catch: one hand, at full stretch.
+    this.isWide = force
+      ? force === 'wide'
+      : !tut && !this.isHighCatch && !this.isLowCatch && this.ballNo >= CFG.wideFromBall && Math.random() < CFG.wideChance;
+    let aimX = tut ? 0 : (Math.random() * 2 - 1) * CFG.targetSpreadX;
+    if (this.isWide) aimX = (this.forceWideSide || (Math.random() < 0.5 ? -1 : 1)) * CFG.wideSpreadX * (0.9 + 0.1 * Math.random());
+    this.aim.set(aimX, targetY, CFG.arriveZ);
 
     this.coach.swing();
     this.focus.resetPitch();
@@ -450,6 +468,8 @@ export class GameSystem extends createSystem({}) {
       this.message('High ball! Reach up with both hands', COLORS.ink, 3.5);
     } else if (this.isLowCatch) {
       this.message('Low dipper! Down to the knees', COLORS.ink, 3.5);
+    } else if (this.isWide) {
+      this.message('Wide! Stretch out one hand', COLORS.ink, 3.5);
     }
   }
 
@@ -481,45 +501,17 @@ export class GameSystem extends createSystem({}) {
     this.deflected = false;
     this.twoHanded = false;
     this.cupType = null;
-    this.prevPalmOk.left = false;
-    this.prevPalmOk.right = false;
+    this.freeFlight = false;
+    this.catchInfo = null;
+    this.hands.left.prevOk = false;
+    this.hands.right.prevOk = false;
     this.sound.crack();
     this.state = 'flying';
   }
 
-  // Detect whether the player's hands are cupped together, and verify the anatomical
-  // cricket cup type (Reverse Cup W-shape vs Orthodox Low Cup) using WebXR joint vectors.
-  getCupType() {
-    if (!this.palmOk.left || !this.palmOk.right) return null;
-    const palmDist = this.palm.left.distanceTo(this.palm.right);
-    if (palmDist > CFG.twoHandGap) return null;
-
-    const colL = this.handColliders.left;
-    const colR = this.handColliders.right;
-    if (colL.hasJoints && colR.hasJoints) {
-      const thumbDist = colL.thumb.distanceTo(colR.thumb);
-      const pinkyDist = colL.pinky.distanceTo(colR.pinky);
-      const fingersUpL = this.palmFingers.left.y;
-      const fingersUpR = this.palmFingers.right.y;
-
-      // Reverse cup (W-shape for high balls): fingers pointing up, thumbs closer together than pinkies
-      if (fingersUpL > -0.05 && fingersUpR > -0.05 && thumbDist < pinkyDist) {
-        return 'reverse-cup';
-      }
-      // Orthodox cup (for low balls): fingers pointing down towards turf, pinkies closer together than thumbs
-      if (fingersUpL < 0.15 && fingersUpR < 0.15 && pinkyDist < thumbDist) {
-        return 'orthodox-cup';
-      }
-      return 'two-handed';
-    }
-
-    if (this.isHighCatch) return 'reverse-cup';
-    if (this.isLowCatch) return 'orthodox-cup';
-    return 'two-handed';
-  }
-
   // The ball has touched `side`'s hand, at its current position. It settles into the palm from there.
-  caught(side) {
+  // d: the catch decision (technique, tags, quality), see catching.js.
+  caught(side, d) {
     this.diagnostics?.recordEvent('caught', { side, high: this.isHighCatch, speedKmh: this.kmh });
     this.state = 'feedback';
     this.timer = CFG.feedbackDelay;
@@ -528,9 +520,12 @@ export class GameSystem extends createSystem({}) {
     this.settle = 0;
     this.settleFrom.copy(this.ball.position);
     this.settleScale = this.ball.scale.x;
-    const cupType = this.getCupType();
-    this.twoHanded = !!cupType;
-    this.cupType = cupType;
+    const twoHand = !!(d && d.twoHand);
+    this.twoHanded = twoHand;
+    this.cupType = twoHand ? d.technique : null;
+    this.catchInfo = d
+      ? { technique: d.technique, tags: d.tags.slice(), quality: d.quality, twoHand, side, relSpeed: d.relSpeed }
+      : { technique: 'one-hand', tags: [], quality: 0.5, twoHand: false, side, relSpeed: 0 };
     if (!this.tut) {
       this.score++;
       this.streak++;
@@ -556,36 +551,50 @@ export class GameSystem extends createSystem({}) {
     this.sound.caught();
     this.coach.cheer();
     this.hud.set({ score: this.score, focus: f });
-    let catchMsg = 'CAUGHT!';
-    if (this.isHighCatch) {
-      if (cupType === 'reverse-cup') catchMsg = 'HIGH CATCH! Reverse cup locked';
-      else if (this.twoHanded) catchMsg = 'HIGH CATCH! Two-handed snag';
-      else catchMsg = 'HIGH CATCH! Reached high';
-    } else if (this.isLowCatch) {
-      if (cupType === 'orthodox-cup') catchMsg = 'LOW CATCH! Beautiful orthodox cup';
-      else if (this.twoHanded) catchMsg = 'LOW CATCH! Two-handed pickup';
-      else catchMsg = 'LOW CATCH! Picked off the turf';
-    } else if (this.twoHanded) {
-      catchMsg = 'CAUGHT!  Safe hands (2-Handed)';
-    } else if (this.streak >= 3) {
-      catchMsg = `CAUGHT!  ${this.streak} in a row`;
-    }
-    if (this.tut) {
-      catchMsg = TUT_CAUGHT[Math.min(this.tut.done, 2)];
-      this.tut.done++;
-      this.tut.fails = 0;
-    }
-    this.message(catchMsg, COLORS.good, CFG.feedbackDelay);
+    this.message(this.tut ? this.tutorialCaughtLine() : this.catchMessage(), COLORS.good, CFG.feedbackDelay);
   }
 
-  // why: 'missed' (it went past) or 'back' (it glanced off the back of a hand).
+  tutorialCaughtLine() {
+    const line = TUT_CAUGHT[Math.min(this.tut.done, 2)];
+    this.tut.done++;
+    this.tut.fails = 0;
+    return line;
+  }
+
+  // One line that names the catch the way a commentator would.
+  catchMessage() {
+    const info = this.catchInfo;
+    const tags = info.tags;
+    const two = info.twoHand;
+    const cup = info.technique;
+    if (tags.includes('stretch')) return 'STRETCH CATCH! One hand, at full reach';
+    if (this.isHighCatch || (tags.includes('high') && two)) {
+      if (cup === 'reverse-cup') return 'HIGH CATCH! Reverse cup locked';
+      return two ? 'HIGH CATCH! Two-handed snag' : 'HIGH CATCH! Reached high';
+    }
+    if (this.isLowCatch || (tags.includes('low') && two)) {
+      if (cup === 'orthodox-cup') return 'LOW CATCH! Beautiful orthodox cup';
+      return two ? 'LOW CATCH! Two-handed pickup' : 'LOW CATCH! Picked off the turf';
+    }
+    if (tags.includes('fast')) return `FAST HANDS! ${this.kmh} km/h${two ? ' (2-Handed)' : ''}`;
+    if (two) return 'CAUGHT!  Safe hands (2-Handed)';
+    if (tags.includes('soft')) return 'CAUGHT!  Soft hands';
+    if (this.streak >= 3) return `CAUGHT!  ${this.streak} in a row`;
+    return 'CAUGHT!';
+  }
+
+  // why: 'missed' (it went past), or a deflection: 'back' (back of the hand), 'wrist' (wrist or forearm),
+  // 'edge' (edge-on to the palm, or a finger jam), 'fist' (a clenched hand).
   missed(why = 'missed') {
-    this.diagnostics?.recordEvent(why === 'back' ? 'deflection_back_of_hand' : 'missed', { why });
+    const deflection = why !== 'missed';
+    this.diagnostics?.recordEvent(why === 'back' ? 'deflection_back_of_hand' : deflection ? `deflection_${why}` : 'missed', { why });
     this.state = 'feedback';
     this.timer = CFG.feedbackDelay;
     this.heldBy = null;
     this.lastResult = why;
-    this.ball.visible = why === 'back'; // a deflected ball is seen flying off
+    this.deflected = deflection;
+    this.freeFlight = !deflection; // a ball that was simply missed flies on past the player
+    this.ball.visible = true; // seen flying off or on, until it lands or the next ball
     if (!this.tut) this.misses++;
     this.streak = 0;
     const f = this.focus.focus;
@@ -601,11 +610,14 @@ export class GameSystem extends createSystem({}) {
     this.hud.set({ misses: this.misses, focus: f });
     let msg = 'MISSED';
     if (why === 'back') msg = 'Off the back of the hand';
+    else if (why === 'wrist') msg = 'Hit the wrist: catch with the palm';
+    else if (why === 'edge') msg = 'Edge of the hand: face your palm to the ball';
+    else if (why === 'fist') msg = 'Open your hand to catch';
     else if (this.lastFocus !== null && this.focus.lostAt !== null) msg = `Eyes left it at ${Math.max(1, Math.round(this.focus.lostAt))} m`;
     else if (this.nearest < CFG.nearMiss) msg = `Just missed: ${Math.max(1, Math.round(this.nearest * 100))} cm`;
     if (this.tut) {
       this.tut.fails++;
-      msg = why === 'back' ? 'Show your palm to the ball' : this.tut.fails > 1 ? 'Palm open, reach for the ring' : 'Not quite. Reach for the ring';
+      msg = deflection ? 'Show your palm to the ball' : this.tut.fails > 1 ? 'Palm open, reach for the ring' : 'Not quite. Reach for the ring';
     }
     this.message(msg, COLORS.bad, CFG.feedbackDelay);
   }
@@ -663,7 +675,7 @@ export class GameSystem extends createSystem({}) {
     ];
     if (this.focusCount) {
       const pct = Math.round((this.focusSum / this.focusCount) * 100);
-      const how = this.focus.simulated ? 'emulated eyes' : this.focus.mode === 'eyes' ? 'eye tracking' : 'head direction';
+      const how = this.focus.simulated ? 'emulated eyes' : this.focus.realEyes ? 'eye tracking' : 'head direction (no eye tracking)';
       lines.push({ text: `Eyes on the ball  ${pct}%  (${how})` });
     }
     lines.push({ text: `Best streak ${this.bestStreak}   |   Best ${this.best}` });
@@ -681,97 +693,84 @@ export class GameSystem extends createSystem({}) {
   }
 
   // ---------- helpers ----------
-  readPalms() {
+  // Reads both hands for this frame: from the mouse hand on a PC, otherwise from the tracked hands'
+  // joints (real data), falling back to a bare grip position for controllers or lost joints.
+  readPalms(dt = 1 / 72) {
+    const inSession = !!this.world.session;
+    (inSession ? this.player.head : this.world.camera).getWorldPosition(this.head);
+    (inSession ? this.player.head : this.world.camera).getWorldQuaternion(this.headQ);
+
     this.desktop.update(this.player);
     if (this.desktop.active) {
       const mode = this.desktop.handMode;
-      if (mode === 'both') {
-        this.palm.left.copy(this.desktop.position);
-        this.palm.left.x -= 0.06;
-        this.palm.right.copy(this.desktop.position);
-        this.palm.right.x += 0.06;
-        this.palmOk.left = true;
-        this.palmOk.right = true;
-        this.palmNormal.left.set(0, 0, -1);
-        this.palmNormal.right.set(0, 0, -1);
-        this.palmNormalOk.left = true;
-        this.palmNormalOk.right = true;
-        this.palmFingers.left.set(0, 1, 0);
-        this.palmFingers.right.set(0, 1, 0);
-        this.palmThumb.left.set(1, 0, 0);
-        this.palmThumb.right.set(-1, 0, 0);
-        this.handColliders.left.palm.copy(this.palm.left);
-        this.handColliders.right.palm.copy(this.palm.right);
-        this.handColliders.left.wrist.copy(this.palm.left).setY(this.palm.left.y - 0.08);
-        this.handColliders.right.wrist.copy(this.palm.right).setY(this.palm.right.y - 0.08);
-        this.handColliders.left.hasJoints = false;
-        this.handColliders.right.hasJoints = false;
-      } else if (mode === 'left') {
-        this.palm.left.copy(this.desktop.position);
-        this.palmOk.left = true;
-        this.palmOk.right = false;
-        this.palmNormal.left.set(0, 0, -1);
-        this.palmNormalOk.left = true;
-        this.palmFingers.left.set(0, 1, 0);
-        this.palmThumb.left.set(1, 0, 0);
-        this.handColliders.left.palm.copy(this.palm.left);
-        this.handColliders.left.wrist.copy(this.palm.left).setY(this.palm.left.y - 0.08);
-        this.handColliders.left.hasJoints = false;
-      } else {
-        this.palm.right.copy(this.desktop.position);
-        this.palmOk.right = true;
-        this.palmOk.left = false;
-        this.palmNormal.right.set(0, 0, -1);
-        this.palmNormalOk.right = true;
-        this.palmFingers.right.set(0, 1, 0);
-        this.palmThumb.right.set(-1, 0, 0);
-        this.handColliders.right.palm.copy(this.palm.right);
-        this.handColliders.right.wrist.copy(this.palm.right).setY(this.palm.right.y - 0.08);
-        this.handColliders.right.hasJoints = false;
+      const both = mode === 'both';
+      for (const side of ['left', 'right']) {
+        const h = this.hands[side];
+        const used = both || mode === side || (mode !== 'left' && side === 'right');
+        if (!used) {
+          invalidateHand(h);
+          continue;
+        }
+        this.tmp.copy(this.desktop.position);
+        if (both) this.tmp.x += side === 'left' ? -0.06 : 0.06;
+        setHandFromPoint(h, this.tmp);
       }
-      return;
+    } else {
+      const J = this.J;
+      for (const side of ['left', 'right']) {
+        const h = this.hands[side];
+        const space = this.player.gripSpaces[side];
+        h.valid = false;
+        if (!space.visible) {
+          invalidateHand(h);
+          continue;
+        }
+        const hand = trackedHands[side];
+        const j = hand && hand.joints;
+        let ok = false;
+        if (this.palmFromJoints && j && j.wrist && j['middle-finger-phalanx-proximal'] && j['index-finger-metacarpal'] && j['pinky-finger-metacarpal']) {
+          const opt = (name, out) => {
+            if (!j[name]) return null;
+            j[name].getWorldPosition(out);
+            return out;
+          };
+          const full = {
+            wrist: opt('wrist', J.wrist),
+            middleProx: opt('middle-finger-phalanx-proximal', J.middleProx),
+            indexMeta: opt('index-finger-metacarpal', J.indexMeta),
+            pinkyMeta: opt('pinky-finger-metacarpal', J.pinkyMeta),
+            indexProx: opt('index-finger-phalanx-proximal', J.indexProx),
+            pinkyProx: opt('pinky-finger-phalanx-proximal', J.pinkyProx),
+            thumbProx: opt('thumb-phalanx-proximal', J.thumbProx),
+            middleTip: opt('middle-finger-tip', J.middleTip),
+            indexTip: opt('index-finger-tip', J.indexTip),
+            pinkyTip: opt('pinky-finger-tip', J.pinkyTip),
+            thumbTip: opt('thumb-tip', J.thumbTip),
+          };
+          ok = setHandFromJoints(h, full);
+        }
+        if (!ok) {
+          space.getWorldPosition(this.tmp);
+          setHandFromPoint(h, this.tmp);
+        }
+      }
     }
-    for (const side of ['left', 'right']) {
-      const space = this.player.gripSpaces[side];
-      this.palmOk[side] = space.visible;
-      this.palmNormalOk[side] = false;
-      const hand = trackedHands[side];
-      const j = hand && hand.joints;
-      if (
-        this.palmFromJoints && space.visible && j &&
-        j.wrist && j['middle-finger-phalanx-proximal'] && j['index-finger-metacarpal'] && j['pinky-finger-metacarpal']
-      ) {
-        // The palm as it is drawn: between the wrist and the knuckles, on the skin of the palm.
-        const wrist = j.wrist.getWorldPosition(this.j[0]);
-        const knuckle = j['middle-finger-phalanx-proximal'].getWorldPosition(this.j[1]);
-        const fingers = this.palmFingers[side].subVectors(knuckle, wrist).normalize();
-        const across = j['index-finger-metacarpal'].getWorldPosition(this.j[2]).sub(j['pinky-finger-metacarpal'].getWorldPosition(this.j[3]));
-        across.addScaledVector(fingers, -across.dot(fingers)).normalize();
-        this.palmThumb[side].copy(across); // index side: the thumb is that way
-        // For a right hand, across x fingers points out of the palm; a left hand is its mirror image.
-        const normal = this.palmNormal[side].crossVectors(across, fingers).normalize();
-        if (side === 'left') normal.negate();
-        this.palm[side].copy(wrist).lerp(knuckle, 0.55).addScaledVector(normal, 0.012);
-        this.palmNormalOk[side] = true;
+    // Shoulders (for judging a stretching catch): below and to each side of the head.
+    this.tmp.set(1, 0, 0).applyQuaternion(this.headQ);
+    this.tmp.y = 0;
+    if (this.tmp.lengthSq() < 1e-6) this.tmp.set(1, 0, 0);
+    this.tmp.normalize();
+    this.shoulders.axis.copy(this.tmp);
+    this.shoulders.right.copy(this.head).addScaledVector(this.tmp, 0.18);
+    this.shoulders.left.copy(this.head).addScaledVector(this.tmp, -0.18);
+    this.shoulders.right.y -= 0.22;
+    this.shoulders.left.y -= 0.22;
 
-        // Store anatomical compound collision points:
-        const col = this.handColliders[side];
-        col.wrist.copy(wrist);
-        col.palm.copy(this.palm[side]);
-        if (j['middle-finger-tip']) j['middle-finger-tip'].getWorldPosition(col.fingers);
-        else col.fingers.copy(knuckle).addScaledVector(fingers, 0.065);
-        if (j['index-finger-tip']) j['index-finger-tip'].getWorldPosition(col.index);
-        else col.index.copy(col.fingers).addScaledVector(across, side === 'left' ? -0.025 : 0.025);
-        if (j['pinky-finger-tip']) j['pinky-finger-tip'].getWorldPosition(col.pinky);
-        else col.pinky.copy(col.fingers).addScaledVector(across, side === 'left' ? 0.025 : -0.025);
-        if (j['thumb-tip']) j['thumb-tip'].getWorldPosition(col.thumb);
-        else col.thumb.copy(this.palm[side]).addScaledVector(across, side === 'left' ? -0.04 : 0.04);
-        col.hasJoints = true;
-      } else {
-        space.getWorldPosition(this.palm[side]);
-        this.handColliders[side].palm.copy(this.palm[side]);
-        this.handColliders[side].hasJoints = false;
-      }
+    for (const side of ['left', 'right']) {
+      const h = this.hands[side];
+      this.palmOk[side] = h.valid;
+      this.palmNormalOk[side] = h.valid && h.hasNormal;
+      updateHandMotion(h, dt);
     }
   }
 
@@ -782,9 +781,9 @@ export class GameSystem extends createSystem({}) {
     this.paused = this.world.visibilityState.peek() === VisibilityState.VisibleBlurred;
     if (this.paused) return;
     this.updateCrouch(dt);
-    this.readPalms();
+    this.readPalms(dt);
     const inHeadset = !!this.world.session;
-    this.focus.sample(this.player, this.world.camera, inHeadset);
+    this.focus.sample(this.player, this.world.camera, inHeadset, dt);
     if (this.state === 'swinging' || this.state === 'flying') {
       this.eyeTracker.update(
         this.focus,
@@ -838,13 +837,6 @@ export class GameSystem extends createSystem({}) {
     }
     this.marker.rotation.y += dt;
 
-    if (this.world.session && !this._sessionSelectHooked) {
-      this._sessionSelectHooked = true;
-      this.world.session.addEventListener('selectstart', () => {
-        if (this.state === 'flying') this.tryClickCatch();
-      });
-    }
-
     if (this.diagnostics) {
       this.diagnostics.update({
         gameState: this.state,
@@ -852,18 +844,21 @@ export class GameSystem extends createSystem({}) {
           left: {
             tracked: this.palmOk.left,
             palm: this.palm.left,
-            fingers: this.handColliders.left.fingers,
+            fingers: this.hands.left.tips.middle,
             normal: this.palmNormal.left,
           },
           right: {
             tracked: this.palmOk.right,
             palm: this.palm.right,
-            fingers: this.handColliders.right.fingers,
+            fingers: this.hands.right.tips.middle,
             normal: this.palmNormal.right,
           },
         },
         gaze: {
           mode: this.focus.mode,
+          source: this.focus.source,
+          movement: this.focus.movement,
+          valid: this.focus.valid,
           focus: this.focus.focusFraction,
           watching: this.focus.inCone,
           origin: this.world.camera.position,
@@ -892,252 +887,222 @@ export class GameSystem extends createSystem({}) {
     if (show) this.aimRing.scale.setScalar(1 + 0.12 * Math.sin(this.life * 14));
   }
 
+  // A pinch (or a click in the emulator) anywhere also starts the round, so the green ball does not
+  // have to be reached by hand.
+  watchPinch() {
+    const session = this.world.session;
+    if (!session || session === this._pinchSession) return;
+    this._pinchSession = session;
+    session.addEventListener('selectstart', () => {
+      if ((this.state === 'idle' || this.state === 'over') && this.lockout <= 0) this.startRound();
+    });
+  }
+
   updateRestart() {
+    this.watchPinch();
     if (this.lockout > 0) return;
     for (const side of ['left', 'right']) {
-        if (this.palmOk[side]) {
-          if (this.palm[side].distanceTo(this.marker.position) < RESTART_RADIUS) {
-            this.startRound();
-            return;
+      if (this.palmOk[side]) {
+        if (this.palm[side].distanceTo(this.marker.position) < RESTART_RADIUS) {
+          this.startRound();
+          return;
+        }
+        if (this.palm[side].distanceTo(this.lobbyMarker.position) < RESTART_RADIUS) {
+          const loc = window.location;
+          if (loc.port === '8081' || loc.port === '8082' || loc.port === '8083') {
+            window.location.href = `${loc.protocol}//${loc.hostname}:8080/`;
+          } else {
+            const parts = loc.pathname.split('/').filter(Boolean);
+            if (parts.length > 0) parts.pop();
+            const base = parts.length > 0 ? `/${parts.join('/')}/` : '/';
+            window.location.href = `${loc.origin}${base}`;
           }
-          if (this.palm[side].distanceTo(this.lobbyMarker.position) < RESTART_RADIUS) {
-            const loc = window.location;
-            if (loc.port === '8081' || loc.port === '8082' || loc.port === '8083') {
-              window.location.href = `${loc.protocol}//${loc.hostname}:8080/`;
-            } else {
-              const parts = loc.pathname.split('/').filter(Boolean);
-              if (parts.length > 0) parts.pop();
-              const base = parts.length > 0 ? `/${parts.join('/')}/` : '/';
-              window.location.href = `${loc.origin}${base}`;
-            }
-            return;
-          }
+          return;
         }
       }
-    }
-
-    updateFlight(dt) {
-      // Exact flight (not stepped): the swing and gravity bend it, and it arrives precisely where it
-      // was aimed (where the ring is), whatever the frame rate.
-      this.prev.copy(this.ball.position);
-      const t = this.life + dt;
-      this.ball.position.copy(this.launchFrom).addScaledVector(this.launchVel, t).addScaledVector(this.accel, 0.5 * t * t);
-      this.vel.copy(this.launchVel).addScaledVector(this.accel, t);
-      this.ball.rotation.y += 18 * dt; // spin about the seam
-      // Real size in the coach's hand, growing to the game's catchable size as it leaves the bat.
-      this.ball.scale.setScalar(Math.min(1, this.coach.ballScale + this.life * 2.5));
-      setGlowForDistance(this.ball, CFG.arriveZ - this.ball.position.z);
-      this.focus.track(this.ball.position, dt, CFG.arriveZ - this.ball.position.z);
-      this.life += dt;
-      this.fx.trailPoint(this.ball.position, dt);
-
-      // Contact: swept continuous collision detection against the anatomical hand volumes
-      // (palm center, finger tips, thumb) with forearm stumpline exclusion.
-      const cupType = this.getCupType();
-      const isCupped = !!cupType;
-      let cuppedBoost = 0;
-      if (cupType === 'reverse-cup' && this.isHighCatch) cuppedBoost = CFG.cuppedBonus * 1.2;
-      else if (cupType === 'orthodox-cup' && this.isLowCatch) cuppedBoost = CFG.cuppedBonus * 1.2;
-      else if (isCupped) cuppedBoost = CFG.cuppedBonus;
-      const palmReach = BALL_RADIUS * this.ball.scale.x + CFG.palmRadius + cuppedBoost;
-      const fingerReach = BALL_RADIUS * this.ball.scale.x + CFG.fingerRadius + cuppedBoost;
-      const simpleReach = BALL_RADIUS * this.ball.scale.x + CFG.handMargin + cuppedBoost;
-
-      let hit = null;
-      let hitD = Infinity;
-      let hitBack = false;
-
-      for (const side of ['left', 'right']) {
-        if (!this.palmOk[side]) continue;
-        const col = this.handColliders[side];
-        const p1 = this.palm[side];
-        // Where the hand was last frame (unless tracking jumped, or this is the first frame).
-        const p0 = this.prevPalmOk[side] && this.prevPalm[side].distanceTo(p1) < 0.5 ? this.prevPalm[side] : p1;
-        const r0 = this.rel0.subVectors(this.prev, p0);
-        const r1 = this.rel1.subVectors(this.ball.position, p1);
-        const seg = this.seg.subVectors(r1, r0);
-        const lenSq = seg.lengthSq();
-        const t = lenSq > 0 ? Math.min(1, Math.max(0, -r0.dot(seg) / lenSq)) : 0;
-        const closest = this.contact.copy(r0).addScaledVector(seg, t);
-        const dPalm = closest.length();
-        const worldContact = this.heldAt.copy(p1).add(closest);
-
-        let sideHit = false;
-        let sideHitD = Infinity;
-
-        if (col.hasJoints) {
-          if (dPalm <= palmReach) {
-            sideHit = true;
-            sideHitD = dPalm;
-          }
-          for (const pt of [col.fingers, col.index, col.pinky, col.thumb]) {
-            const dPt = worldContact.distanceTo(pt);
-            if (dPt <= fingerReach && dPt < sideHitD) {
-              sideHit = true;
-              sideHitD = dPt;
-            }
-          }
-          // Forearm exclusion: reject contacts behind the wrist along the forearm axis
-          if (sideHit && this.palmNormalOk[side]) {
-            const toContact = this.tmp.subVectors(worldContact, col.wrist);
-            const alongArm = toContact.dot(this.palmFingers[side]);
-            if (alongArm < CFG.forearmCutoff) {
-              sideHit = false;
-            }
-          }
-        } else {
-          if (dPalm <= simpleReach) {
-            sideHit = true;
-            sideHitD = dPalm;
-          }
-        }
-
-        const effectiveReach = col.hasJoints ? palmReach : simpleReach;
-        this.nearest = Math.min(this.nearest, Math.max(0, dPalm - effectiveReach));
-
-        if (sideHit && sideHitD < hitD) {
-          hit = side;
-          hitD = sideHitD;
-          // Which side of the hand did it come from? Behind the palm means the back of the hand.
-          const from = r0.lengthSq() > 1e-6 ? this.tmp.copy(r0) : this.tmp.copy(this.vel).negate();
-          hitBack = this.palmNormalOk[side] && this.palmNormal[side].dot(from.normalize()) < CFG.backOfHand;
-        }
-      }
-      for (const side of ['left', 'right']) {
-        this.prevPalm[side].copy(this.palm[side]);
-        this.prevPalmOk[side] = this.palmOk[side];
-      }
-      if (hit) {
-        this.ball.position.copy(this.heldAt);
-        if (hitBack) this.deflect(hit);
-        else this.caught(hit);
-        return;
-      }
-      if (this.ball.position.z >= CFG.missZ || this.life > CFG.maxLife) this.missed();
-    }
-
-    // Off the back of the hand: the ball bounces away from it, losing most of its pace.
-    deflect(side) {
-      const n = this.palmNormal[side];
-      const vn = this.vel.dot(n);
-      this.vel.addScaledVector(n, -2 * vn).multiplyScalar(0.35);
-      this.vel.addScaledVector(n, -0.8);
-      this.deflected = true;
-      this.missed('back');
-    }
-
-    updateFeedback(dt) {
-      if (this.heldBy) {
-        // Where the ball rests: in the palm (on its skin, a little towards the fingers), or cradled
-        // between both palms for a two-handed catch. It eases there from the point of contact.
-        const side = this.heldBy;
-        const heldScale = 0.55;
-        const target = this.restAt;
-        if (this.twoHanded && this.palmOk.left && this.palmOk.right) {
-          target.copy(this.palm.left).add(this.palm.right).multiplyScalar(0.5);
-        } else if (this.palmNormalOk[side]) {
-          // In the cup of the hand: on the palm, towards the fingers and the thumb, so it shows past
-          // the edge of the hand from the player's eyes.
-          target.copy(this.palm[side])
-            .addScaledVector(this.palmNormal[side], BALL_RADIUS * heldScale + 0.004)
-            .addScaledVector(this.palmFingers[side], 0.022)
-            .addScaledVector(this.palmThumb[side], 0.03);
-        } else {
-          target.copy(this.palm[side]);
-          target.z -= 0.035;
-          target.y += 0.02;
-          target.x += side === 'left' ? 0.02 : -0.02;
-        }
-        this.heldOutline.visible = true;
-        this.settle = Math.min(1, this.settle + dt / CFG.settleTime);
-        const k = this.settle * this.settle * (3 - 2 * this.settle);
-        this.ball.position.lerpVectors(this.settleFrom, target, k);
-        this.ball.scale.setScalar(this.settleScale + (heldScale - this.settleScale) * k);
-      } else if (this.deflected && this.ball.visible) {
-        this.vel.y -= CFG.gravity * dt;
-        this.ball.position.addScaledVector(this.vel, dt);
-        if (this.ball.position.y < 0.05 || this.timer < 0.3) this.ball.visible = false;
-      }
-      this.timer -= dt;
-      if (this.timer <= 0) this.afterFeedback();
-    }
-
-    tryClickCatch() {
-      if (this.state !== 'flying') return false;
-      const cupType = this.getCupType();
-      const isCupped = !!cupType;
-      const reach = BALL_RADIUS * this.ball.scale.x + CFG.handMargin + (isCupped ? CFG.cuppedBonus : 0);
-      const clickReach = reach * 1.6;
-
-      let bestSide = null;
-      let minD = Infinity;
-      for (const side of ['left', 'right']) {
-        if (!this.palmOk[side]) continue;
-        const d = this.palm[side].distanceTo(this.ball.position);
-        if (d <= clickReach && d < minD) {
-          bestSide = side;
-          minD = d;
-        }
-      }
-      if (bestSide) {
-        this.heldAt.copy(this.ball.position);
-        this.caught(bestSide);
-        return true;
-      }
-      return false;
-    }
-
-    updateCrouch(dt) {
-      const rig = this.player || this.world?.player;
-      if (rig && this.crouchBaseY === 0 && rig.position) {
-        this.crouchBaseY = rig.position.y || 0;
-      }
-
-      if (this.state === 'swinging' || this.state === 'flying') {
-        let lookPitchCrouch = 0;
-        if (this.focus && this.focus.dir && this.focus.dir.y < -0.10) {
-          // Natural bend when tilting head or gaze down towards turf
-          lookPitchCrouch = Math.min(0, Math.max(-0.38, (this.focus.dir.y + 0.10) * 0.95));
-        }
-
-        if (this.isLowCatch) {
-          // Low dipper target: knee or shin height. Fielder crouches smoothly to reach turf level
-          const deliveryCrouch = Math.min(0, Math.max(-0.38, (this.aim.y - 0.75) * 1.0));
-          this.targetCrouch = Math.min(deliveryCrouch, lookPitchCrouch);
-        } else if (this.isHighCatch) {
-          // High skier: reach high upright
-          this.targetCrouch = 0;
-        } else {
-          // Chest or waist catch: allow natural slight bend if looking down
-          this.targetCrouch = lookPitchCrouch;
-        }
-      } else {
-        // Feedback, ready, idle, over: smoothly return player to neutral stance
-        this.targetCrouch = 0;
-      }
-
-      const crouchSpeed = (this.state === 'flying' || this.state === 'swinging') ? 5.0 : 4.0;
-      this.crouchOffset = lerp(this.crouchOffset, this.targetCrouch, Math.min(1, dt * crouchSpeed));
-      if (Math.abs(this.crouchOffset - this.targetCrouch) < 0.005) {
-        this.crouchOffset = this.targetCrouch;
-      }
-
-      if (rig && rig.position) {
-        rig.position.y = this.crouchBaseY + this.crouchOffset;
-      }
-    }
-
-    sampleTrajectory() {
-      if (this.state !== 'flying') return null;
-      const steps = 30;
-      const tMax = Math.max(0.1, this.flightDuration || 1.2);
-      for (let i = 0; i <= steps; i++) {
-        const t = (i / steps) * tMax;
-        this.trajectoryCache[i]
-          .copy(this.launchFrom)
-          .addScaledVector(this.launchVel, t)
-          .addScaledVector(this.accel, 0.5 * t * t);
-      }
-      return this.trajectoryCache;
     }
   }
+
+  updateFlight(dt) {
+    // Exact flight (not stepped): the swing and gravity bend it, and it arrives precisely where it
+    // was aimed (where the ring is), whatever the frame rate.
+    this.prev.copy(this.ball.position);
+    const t = this.life + dt;
+    this.ball.position.copy(this.launchFrom).addScaledVector(this.launchVel, t).addScaledVector(this.accel, 0.5 * t * t);
+    this.vel.copy(this.launchVel).addScaledVector(this.accel, t);
+    this.ball.rotation.y += 18 * dt; // spin about the seam
+    // Real size in the coach's hand, growing to the game's catchable size as it leaves the bat.
+    this.ball.scale.setScalar(Math.min(1, this.coach.ballScale + this.life * 2.5));
+    const ballR = BALL_RADIUS * this.ball.scale.x;
+    setGlowForDistance(this.ball, CFG.arriveZ - this.ball.position.z);
+    this.focus.track(this.ball.position, dt, CFG.arriveZ - this.ball.position.z, ballR);
+    this.life += dt;
+    this.fx.trailPoint(this.ball.position, dt);
+
+    // Contact: the ball is swept through each hand's palm, fingers, thumb and forearm (catching.js),
+    // so a fast ball cannot pass through at any frame rate, and what it touches first decides the
+    // outcome: a catch, or a deflection off the back of the hand, the wrist, the edge or a fist.
+    const d = evaluateCatch(this.hands.left, this.hands.right, this.prev, this.ball.position, this.vel, ballR, this.shoulders, this.decision);
+    this.nearest = Math.min(this.nearest, Math.max(0, d.gap));
+    commitHand(this.hands.left);
+    commitHand(this.hands.right);
+    if (d.outcome === 'catch') {
+      this.ball.position.copy(d.point);
+      this.heldAt.copy(d.point);
+      this.caught(d.side, d);
+      return;
+    }
+    if (d.outcome === 'deflect') {
+      this.ball.position.copy(d.point);
+      this.deflect(d);
+      return;
+    }
+    if (this.ball.position.z >= CFG.missZ || this.life > CFG.maxLife) this.missed();
+  }
+
+  // Off a part of the hand that cannot catch: the ball bounces away and loses most of its pace.
+  deflect(d) {
+    deflectVelocity(this.vel, d.handVel, d.normal, this.vel);
+    this.missed(d.reason);
+  }
+
+  updateFeedback(dt) {
+    if (this.heldBy) {
+      // Where the ball rests: in the palm (on its skin, a little towards the fingers), or cradled
+      // between both palms for a two-handed catch. It eases there from the point of contact.
+      const side = this.heldBy;
+      const heldScale = 0.55;
+      const target = this.restAt;
+      if (this.twoHanded && this.palmOk.left && this.palmOk.right) {
+        target.copy(this.palm.left).add(this.palm.right).multiplyScalar(0.5);
+      } else if (this.palmNormalOk[side]) {
+        // In the cup of the hand: on the palm, towards the fingers and the thumb, so it shows past
+        // the edge of the hand from the player's eyes.
+        target.copy(this.palm[side])
+          .addScaledVector(this.palmNormal[side], BALL_RADIUS * heldScale + 0.004)
+          .addScaledVector(this.palmFingers[side], 0.022)
+          .addScaledVector(this.palmThumb[side], 0.03);
+      } else {
+        target.copy(this.palm[side]);
+        target.z -= 0.035;
+        target.y += 0.02;
+        target.x += side === 'left' ? 0.02 : -0.02;
+      }
+      this.heldOutline.visible = true;
+      // A fast ball takes a moment longer to be absorbed than a gentle one.
+      const info = this.catchInfo;
+      const pace = info ? Math.min(1, info.relSpeed / 22) : 0;
+      // ...and a ball that first touched a fingertip has further to travel into the palm, so it takes longer: never a snap.
+      const dur = Math.max(CFG.settleTime * (0.8 + 0.6 * pace), this.settleFrom.distanceTo(target) / 1.4);
+      this.settle = Math.min(1, this.settle + dt / dur);
+      const k = this.settle * this.settle * (3 - 2 * this.settle);
+      this.ball.position.lerpVectors(this.settleFrom, target, k);
+      this.ball.scale.setScalar(this.settleScale + (heldScale - this.settleScale) * k);
+    } else if (this.deflected && this.ball.visible) {
+      this.stepLooseBall(dt);
+      if (this.timer < 0.3) this.ball.visible = false;
+    } else if (this.freeFlight && this.ball.visible) {
+      // Missed: the ball carries on past the player along its own path until it lands.
+      this.life += dt;
+      const t = this.life;
+      this.ball.position.copy(this.launchFrom).addScaledVector(this.launchVel, t).addScaledVector(this.accel, 0.5 * t * t);
+      this.ball.rotation.y += 18 * dt;
+      if (this.ball.position.y < 0.05 || this.ball.position.z > 8 || this.timer < 0.25) this.ball.visible = false;
+    }
+    this.timer -= dt;
+    if (this.timer <= 0) this.afterFeedback();
+  }
+
+  // A deflected ball: gravity, and a couple of bounces on the ground.
+  stepLooseBall(dt) {
+    const r = BALL_RADIUS * this.ball.scale.x;
+    this.vel.y -= CFG.gravity * dt;
+    this.ball.position.addScaledVector(this.vel, dt);
+    if (this.ball.position.y < r && this.vel.y < 0) {
+      this.ball.position.y = r;
+      this.vel.y *= -0.45;
+      this.vel.x *= 0.8;
+      this.vel.z *= 0.8;
+    }
+    this.ball.rotation.y += 10 * dt;
+  }
+
+  // A mouse click (PC only) gives a ball that is almost in the hand the benefit of the doubt. Never in
+  // a headset: a pinch there must not count as a catch. The ball still has to be on the palm side
+  // of a hand with its palm open to it, not the back of the hand, the wrist or a fist.
+  tryClickCatch() {
+    if (this.state !== 'flying' || this.world.session) return false;
+    const ballR = BALL_RADIUS * this.ball.scale.x;
+    let bestSide = null;
+    let bestS = Infinity;
+    for (const side of ['left', 'right']) {
+      const h = this.hands[side];
+      if (!h.valid) continue;
+      const c = evaluateHand(h, this.ball.position, this.ball.position, this.vel, ballR, CFG.handMargin * 0.6, this.clickContact);
+      if (c.hit && c.result === 'catch' && c.dist < bestS) {
+        bestS = c.dist;
+        bestSide = side;
+      }
+    }
+    if (!bestSide) return false;
+    this.heldAt.copy(this.ball.position);
+    this.caught(bestSide, null);
+    return true;
+  }
+
+  updateCrouch(dt) {
+    const rig = this.player || this.world?.player;
+    if (rig && this.crouchBaseY === 0 && rig.position) {
+      this.crouchBaseY = rig.position.y || 0;
+    }
+
+    if (this.state === 'swinging' || this.state === 'flying') {
+      let lookPitchCrouch = 0;
+      // Bend when the HEAD tips down towards the turf. The eyes alone never move the body, so
+      // flicks of the eyes (or tracker noise) cannot shake the whole view.
+      const pitchDir = this.focus.mode === 'none' ? this.focus.dir : this.focus.headDir;
+      if (pitchDir.y < -0.10) {
+        lookPitchCrouch = Math.min(0, Math.max(-0.38, (pitchDir.y + 0.10) * 0.95));
+      }
+
+      if (this.isLowCatch) {
+        // Low dipper target: knee or shin height. Fielder crouches smoothly to reach turf level
+        const deliveryCrouch = Math.min(0, Math.max(-0.38, (this.aim.y - 0.75) * 1.0));
+        this.targetCrouch = Math.min(deliveryCrouch, lookPitchCrouch);
+      } else if (this.isHighCatch) {
+        // High skier: reach high upright
+        this.targetCrouch = 0;
+      } else {
+        // Chest or waist catch: allow natural slight bend if looking down
+        this.targetCrouch = lookPitchCrouch;
+      }
+    } else {
+      // Feedback, ready, idle, over: smoothly return player to neutral stance
+      this.targetCrouch = 0;
+    }
+
+    const crouchSpeed = (this.state === 'flying' || this.state === 'swinging') ? 5.0 : 4.0;
+    this.crouchOffset = lerp(this.crouchOffset, this.targetCrouch, Math.min(1, dt * crouchSpeed));
+    if (Math.abs(this.crouchOffset - this.targetCrouch) < 0.005) {
+      this.crouchOffset = this.targetCrouch;
+    }
+
+    if (rig && rig.position) {
+      rig.position.y = this.crouchBaseY + this.crouchOffset;
+    }
+  }
+
+  sampleTrajectory() {
+    if (this.state !== 'flying') return null;
+    const steps = 30;
+    const tMax = Math.max(0.1, this.flightDuration || 1.2);
+    for (let i = 0; i <= steps; i++) {
+      const t = (i / steps) * tMax;
+      this.trajectoryCache[i]
+        .copy(this.launchFrom)
+        .addScaledVector(this.launchVel, t)
+        .addScaledVector(this.accel, 0.5 * t * t);
+    }
+    return this.trajectoryCache;
+  }
+}

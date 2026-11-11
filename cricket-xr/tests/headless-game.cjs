@@ -174,18 +174,19 @@ const MAX_KMH = Math.round((22 + 1.5) * 3.6); // top speed incl. jitter
     // ---- contact: what counts as touching the hand ----
     // Each scenario plays a whole round with a hand placed relative to the ball every frame.
     const force = { normal: null }; // force a palm facing (the grip pose has none)
+    const cat = window.__game.catching;
     const read = sys.readPalms.bind(sys);
-    sys.readPalms = () => {
-      read();
+    sys.readPalms = (dt) => {
+      read(dt);
       if (force.normal) for (const side of ['left', 'right']) {
-        // A hand held up, fingers to the sky, thumb inwards, palm facing force.normal.
-        sys.palmNormal[side].copy(force.normal);
-        sys.palmFingers[side].set(0, 1, 0);
-        sys.palmThumb[side].set(side === 'right' ? -1 : 1, 0, 0);
+        // A hand held up, fingers to the sky, thumb inwards, palm facing force.normal: rebuilt as a full hand shape.
+        const h = sys.hands[side];
+        cat.setHandFromPose(h, h.palm.clone(), force.normal, new V(0, 1, 0), 0.75);
         sys.palmNormalOk[side] = true;
       }
     };
     const scenario = (place, normal) => {
+      lookAt(new V(0, 1.4, -10)); // a sane head pose: looking down the pitch
       force.normal = normal || null;
       park();
       sys.lockout = 0;
@@ -237,7 +238,7 @@ const MAX_KMH = Math.round((22 + 1.5) * 3.6); // top speed incl. jitter
       two: scenario((p) => {
         placeGrip('left', new V(p.x - 0.07, p.y, p.z));
         placeGrip('right', new V(p.x + 0.07, p.y, p.z));
-      }),
+      }, new V(0, 0, -1)), // both palms facing the coach, close together: a cup
     };
 
     return { rounds, restartedState, balls, contact };
@@ -268,7 +269,7 @@ const MAX_KMH = Math.round((22 + 1.5) * 3.6); // top speed incl. jitter
       cam.updateMatrixWorld(true);
       const p = new V().copy(point).project(cam);
       const r = el.getBoundingClientRect();
-      el.dispatchEvent(new PointerEvent('pointermove', { clientX: r.left + ((p.x + 1) / 2) * r.width, clientY: r.top + ((1 - p.y) / 2) * r.height }));
+      el.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: r.left + ((p.x + 1) / 2) * r.width, clientY: r.top + ((1 - p.y) / 2) * r.height }));
     };
     move(sys.marker.position); // mouse over the green ball
     sys.update(1 / 60);

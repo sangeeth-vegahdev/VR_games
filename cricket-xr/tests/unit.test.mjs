@@ -30,8 +30,11 @@ test('a catch needs the ball to touch the hand: the margin is a real hand, not a
   assert.ok(BALL_RADIUS + CFG.handMargin < 0.23, 'the 23 cm miss in the test really is a miss');
 });
 
-test('the back-of-hand cut-off is an angle cosine, and the miss message has a sensible range', () => {
-  assert.ok(CFG.backOfHand < 0 && CFG.backOfHand > -1);
+test('catch thresholds are sensible: back-of-hand, facing, wrist and fist limits, and the miss message range', () => {
+  assert.ok(CFG.backSide > 0 && CFG.backSide < 0.08, 'a ball clearly behind the palm plane is the back of the hand');
+  assert.ok(CFG.facingPalm > 0 && CFG.facingFinger <= CFG.facingPalm && CFG.facingFinger < 0.7);
+  assert.ok(CFG.wristCutoff >= 0 && CFG.wristCutoff < 0.05);
+  assert.ok(CFG.fistOpenness > 0 && CFG.fistOpenness < 0.4);
   assert.ok(CFG.nearMiss > 0.1 && CFG.nearMiss < 1, 'a near miss is measured in tens of centimetres');
 });
 
@@ -175,21 +178,6 @@ test('round delivery progression: all 50 deliveries maintain valid physical prop
     const swing = CFG.swingBase + (CFG.swingMax - CFG.swingBase) * ramp;
     assert.ok(swing >= CFG.swingBase && swing <= CFG.swingMax, `Ball ${i + 1} swing ${swing} is within limits`);
   }
-});
-
-test('back-of-hand glance: normal dot product cleanly distinguishes palm catch from glance', () => {
-  const palmNormal = new Vector3(0, 0, -1); // Palm facing towards bowler (-Z)
-  const incomingBallDir = new Vector3(0, 0, 1); // Ball traveling towards player (+Z)
-  const from = incomingBallDir.clone().negate(); // Vector pointing from hand towards ball (-Z)
-
-  // Palm facing ball directly: dot product is +1.0
-  const frontalDot = palmNormal.dot(from);
-  assert.ok(frontalDot > CFG.backOfHand, 'Frontal palm catch has dot > backOfHand threshold');
-
-  // Hand turned around: palm facing +Z (away from bowler)
-  const backNormal = new Vector3(0, 0, 1);
-  const backDot = backNormal.dot(from);
-  assert.ok(backDot < CFG.backOfHand, 'Back-of-hand has dot < backOfHand threshold (deflection)');
 });
 
 test('game timing: delta time clamp maintains 1:1 real-world speed across 15 to 90 FPS', () => {

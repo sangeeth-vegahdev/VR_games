@@ -319,7 +319,7 @@ export class DiagnosticsPanel {
       ${right?.tracked ? `<div> &bull; Palm: (${fmtV(right.palm)})</div><div> &bull; Norm: (${fmtV(right.normal)})</div>` : ''}
 
       <div style="margin-top:6px; border-top:1px solid #223; padding-top:4px; font-weight:bold; color:#a78bfa;">GAZE & EYE TRACKING</div>
-      <div><b>Mode:</b> <span style="color:${gaze?.mode === 'eyes' ? '#4ade80' : gaze?.mode === 'head' ? '#f59e0b' : '#94a3b8'}">${(gaze?.mode || 'none').toUpperCase()}</span> ${gaze?.mode === 'eyes' ? '(Quest Pro)' : gaze?.mode === 'head' ? '(Head Fallback)' : ''}</div>
+      <div><b>Gaze:</b> <span style="color:${gaze?.source === 'eyes' ? '#4ade80' : gaze?.source === 'head' ? '#f59e0b' : gaze?.source === 'simulated-eyes' ? '#60a5fa' : '#94a3b8'}">${(gaze?.source || gaze?.mode || 'none').toUpperCase()}</span> ${gaze?.source === 'eyes' ? '(real eye tracking)' : gaze?.source === 'head' ? '(head direction: no eye data)' : gaze?.source === 'simulated-eyes' ? '(mouse stand-in, not real)' : gaze?.source === 'eyes-lost' ? '(eye data lost)' : ''} <b>Move:</b> ${gaze?.movement || '-'}</div>
       <div><b>Focus:</b> ${gaze?.focus != null ? (gaze.focus * 100).toFixed(0) + '%' : 'n/a'} | <b>Watching:</b> ${gaze?.watching ? '<span style="color:#4ade80">YES</span>' : '<span style="color:#94a3b8">NO</span>'}</div>
 
       <div style="margin-top:6px; border-top:1px solid #223; padding-top:4px; font-weight:bold; color:#fb923c;">INTERACTIONS</div>

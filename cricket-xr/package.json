@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "iwsdk dev restart --open --foreground",
     "dev:runtime": "vite",
-    "test:unit": "node --test tests/unit.test.mjs",
+    "test:unit": "node --test tests/unit.test.mjs tests/catching.test.mjs tests/gaze.test.mjs tests/hand-anim.test.mjs tests/no-low-balls.test.mjs",
     "dev:down": "iwsdk dev down",
     "dev:status": "iwsdk dev status",
     "reference:status": "iwsdk reference status",
